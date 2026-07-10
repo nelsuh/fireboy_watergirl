@@ -1,0 +1,131 @@
+/* FIRE & WATER — landscape mobile co-op platformer */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: #0c0f16;
+  overflow: hidden;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+/* Rotating stage: fills the viewport; when the device is portrait we
+   rotate the whole stage 90° so the game is always landscape. */
+#rot {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+}
+#rot.rotated {
+  width: 100vh; height: 100vw;
+  transform: rotate(90deg) translateY(-100%);
+  transform-origin: top left;
+}
+
+#board {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  display: block;
+}
+
+/* ── Touch controls ─────────────────────────────────────── */
+.pad {
+  position: absolute;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  display: flex;
+  gap: 14px;
+  z-index: 5;
+}
+.pad-left  { left: 14px; }
+.pad-right { right: 14px; }
+
+.ctl {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.22);
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.85);
+  font-size: 26px;
+  line-height: 1;
+  backdrop-filter: blur(2px);
+  touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.ctl:active, .ctl.held {
+  background: rgba(255,255,255,.24);
+  border-color: rgba(255,255,255,.5);
+}
+.ctl-jump { width: 74px; height: 74px; font-size: 30px; }
+.ctl-swap {
+  width: 52px; height: 52px; font-size: 22px;
+  align-self: flex-start;
+  border-color: rgba(255,200,80,.45);
+  color: #ffd76e;
+}
+
+/* ── Overlays ───────────────────────────────────────────── */
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 10, 16, .82);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 20;
+}
+.card {
+  text-align: center;
+  color: #eef1f7;
+  padding: 26px 30px;
+  border-radius: 18px;
+  background: rgba(24, 28, 40, .92);
+  border: 1px solid rgba(255,255,255,.1);
+  max-width: 78%;
+}
+.card p { margin: 12px 0 16px; font-size: 15px; color: #c7cddb; }
+.card h2 { font-size: 22px; margin-top: 8px; }
+.end-emoji { font-size: 44px; }
+
+.btn {
+  border: 1px solid rgba(255,255,255,.25);
+  background: rgba(255,255,255,.08);
+  color: #eef1f7;
+  padding: 10px 22px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.btn:active { background: rgba(255,255,255,.2); }
+.btn-primary {
+  background: linear-gradient(135deg, #ff7a45, #4da3ff);
+  border: none;
+  color: #fff;
+}
+
+.spinner {
+  width: 34px; height: 34px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,.15);
+  border-top-color: #ff9a5a;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.toast {
+  position: absolute;
+  top: 12px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 24, 34, .92);
+  color: #ffdf9e;
+  border: 1px solid rgba(255,255,255,.14);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  z-index: 25;
+  white-space: nowrap;
+}

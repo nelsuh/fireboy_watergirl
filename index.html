@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Fire &amp; Water</title>
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+
+<body>
+
+<div id="rot">
+  <canvas id="board"></canvas>
+
+  <!-- Touch controls (landscape): move on the left, jump on the right -->
+  <div class="pad pad-left">
+    <button class="ctl" id="btnLeft"  aria-label="left">◀</button>
+    <button class="ctl" id="btnRight" aria-label="right">▶</button>
+  </div>
+  <div class="pad pad-right">
+    <button class="ctl ctl-swap" id="btnSwap" aria-label="swap" hidden>⇄</button>
+    <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
+  </div>
+
+  <!-- Overlays -->
+  <div id="waitingOverlay" class="overlay" hidden>
+    <div class="card">
+      <div class="spinner"></div>
+      <p id="waitingText">Waiting for your partner…</p>
+      <button class="btn" id="soloBtn">Play solo instead</button>
+    </div>
+  </div>
+
+  <div id="pauseOverlay" class="overlay" hidden>
+    <div class="card">
+      <div class="spinner"></div>
+      <p id="pauseText">Reconnecting…</p>
+    </div>
+  </div>
+
+  <div id="endOverlay" class="overlay" hidden>
+    <div class="card">
+      <div class="end-emoji" id="endEmoji">🏆</div>
+      <h2 id="endTitle">You did it!</h2>
+      <p id="endStats"></p>
+      <button class="btn btn-primary" id="againBtn">Play again</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+</div>
+
+<script src="https://usions.com/usion-sdk.js"></script>
+<script src="maps.js?v=3"></script>
+<script src="script.js?v=3"></script>
+
+</body>
+</html>
