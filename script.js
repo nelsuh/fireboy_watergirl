@@ -604,9 +604,13 @@ function resize() {
   cw = w; chh = h;
   canvas.width = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
-  scale = Math.min(w / WW, h / WH);
+  // Reserve a strip along the stage bottom for the touch controls (jump pad
+  // is 74px + its bottom margin/safe-inset), so the map is lifted clear of the
+  // buttons instead of the spawn / arrow / low jump-blocks hiding behind them.
+  const padH = Math.min(h * 0.22, 96);
+  scale = Math.min(w / WW, (h - padH) / WH);
   ox = (w - WW * scale) / 2;
-  oy = (h - WH * scale) / 2;
+  oy = Math.max(0, (h - padH - WH * scale) / 2);  // top-biased: keep the reserved strip at the bottom
 }
 window.addEventListener("resize", () => setTimeout(resize, 50));
 
