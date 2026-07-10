@@ -63,6 +63,9 @@ let introT = 0;             // level-name splash timer
 let resetPending = false;
 let resetT = 0;             // countdown to level reset after a death
 let time = 0;               // sim clock (visuals)
+let mapTime = 0;            // seconds spent on the CURRENT map (count-up; survives deaths)
+let mapTimes = [];          // completion time (s) per finished map, index = map number
+let bestTimes = {};         // best completion time (s) per map, persisted
 
 // Solo control
 let soloControlBoth = true; // true when one human drives both heroes
@@ -96,6 +99,23 @@ function showToast(msg, ms) {
   toastEl.hidden = false;
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => { toastEl.hidden = true; }, ms || 2600);
+}
+
+// mm:ss from a seconds value
+function fmtTime(secs) {
+  secs = Math.floor(secs);
+  if (!isFinite(secs) || secs < 0) secs = 0;
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+
+// Best per-map completion times (device-local, survives restarts).
+function loadBestTimes() {
+  try { bestTimes = JSON.parse(localStorage.getItem("fw:best") || "{}") || {}; }
+  catch (_) { bestTimes = {}; }
+}
+function saveBestTimes() {
+  try { localStorage.setItem("fw:best", JSON.stringify(bestTimes)); } catch (_) {}
 }
 
 // ── Level parsing ─────────────────────────────────────────
@@ -148,6 +168,7 @@ function loadLevel(n, opts) {
   if (!chars) chars = { f: mkHero("f"), w: mkHero("w") };
   respawnHeroes();
   resetPending = false;
+  mapTime = 0;               // fresh timer for the new map
   if (!opts.silent) introT = 1.4;
 }
 
@@ -433,6 +454,7 @@ function killHero(k, by) {
 
 // ── Level completion ──────────────────────────────────────
 function updateDoors(dt) {
+  if (ended) return;         // don't re-trigger completion after victory
   let bothIn;
   if (isMultiplayer && partnerHere) {
     // Host decides; the guest only reports its own door state via pos msgs.
@@ -450,25 +472,40 @@ function updateDoors(dt) {
 function advanceLevel() {
   const to = level + 1;
   if (isMultiplayer) {
-    sendRT("advance", { to, deaths, gems: gemsGot });
+    sendRT("advance", { to, deaths, gems: gemsGot, t: Math.round(mapTime) });
     hostCheckpoint(to);
   }
   applyAdvance(to);
 }
 
-function applyAdvance(to) {
+// `completedTime` (seconds) is passed by guests so both clients record the
+// host's authoritative map time; host omits it and uses its own mapTime.
+function applyAdvance(to, completedTime) {
+  const finishedMap = level;
+  const secs = Math.max(0, Math.round(completedTime != null ? completedTime : mapTime));
+  mapTimes[finishedMap] = secs;
+  const prev = bestTimes[finishedMap];
+  const isBest = prev == null || secs < prev;
+  if (isBest) { bestTimes[finishedMap] = secs; saveBestTimes(); }
   if (to >= TOTAL_LEVELS) { showVictory(); return; }
+  showToast(`Map ${finishedMap + 1} cleared — ${fmtTime(secs)}${isBest ? "  ★ new best!" : ""}`);
   loadLevel(to);
 }
 
 function showVictory() {
   ended = true;
   finishedAt = Date.now();
-  const secs = Math.max(1, Math.round((finishedAt - startedAt) / 1000));
-  const mm = Math.floor(secs / 60), ss = ("0" + (secs % 60)).slice(-2);
+  const totalSecs = mapTimes.reduce((a, b) => a + (b || 0), 0);
+  const prevTotal = bestTimes.total;
+  const isBestTotal = prevTotal == null || totalSecs < prevTotal;
+  if (isBestTotal) { bestTimes.total = totalSecs; saveBestTimes(); }
   endEmoji.textContent = "🏆";
   endTitle.textContent = "All 5 maps cleared!";
-  endStats.textContent = `💎 ${gemsGot}/${TOTAL_GEMS} gems · ☠ ${deaths} falls · ⏱ ${mm}:${ss}`;
+  const perMap = MAPS.map((m, i) => `${i + 1}: ${fmtTime(mapTimes[i] || 0)}`).join("   ");
+  endStats.innerHTML =
+    `💎 ${gemsGot}/${TOTAL_GEMS} · ☠ ${deaths} falls · ⏱ <b>${fmtTime(totalSecs)}</b>` +
+    (isBestTotal ? ' <span style="color:#ffd76e">★ new best!</span>' : (prevTotal != null ? ` <span style="opacity:.6">(best ${fmtTime(prevTotal)})</span>` : "")) +
+    `<br><span style="opacity:.72;font-size:13px">${perMap}</span>`;
   endOverlay.hidden = false;
   if (isMultiplayer) hostCheckpoint(TOTAL_LEVELS);
 }
@@ -477,6 +514,7 @@ function restartAll(broadcast) {
   endOverlay.hidden = true;
   ended = false;
   deaths = 0; gemsGot = 0;
+  mapTimes = [];
   startedAt = Date.now();
   lastRestartAt = Date.now();
   loadLevel(0);
@@ -508,6 +546,7 @@ setInterval(() => {
 
 function simStep() {
   time += DT;
+  mapTime += DT;           // count-up completion timer (gated by running/pause in frame())
   updateChannels(DT);
   for (const k of simulatedHeroes()) stepHero(k, DT);
   updateDoors(DT);
@@ -837,6 +876,26 @@ function drawHUD() {
   ctx.textAlign = "right";
   ctx.fillText(`💎 ${gemsGot}   ☠ ${deaths}`, WW - 10, 17);
 
+  // Center: live per-map timer (gold, or soft-red if behind your best), with
+  // the best time for this map beside it.
+  const best = bestTimes[level];
+  const tStr = "⏱ " + fmtTime(mapTime);
+  const bStr = best != null ? "  best " + fmtTime(best) : "";
+  ctx.textAlign = "left";
+  ctx.font = "700 14px sans-serif";
+  const tW = ctx.measureText(tStr).width;
+  ctx.font = "600 11px sans-serif";
+  const bW = best != null ? ctx.measureText(bStr).width : 0;
+  const startX = WW / 2 - (tW + bW) / 2;
+  ctx.font = "700 14px sans-serif";
+  ctx.fillStyle = (best != null && mapTime > best) ? "#ff9a8a" : "#ffe08a";
+  ctx.fillText(tStr, startX, 17);
+  if (best != null) {
+    ctx.font = "600 11px sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillText(bStr, startX + tW, 17);
+  }
+
   if (introT > 0) {
     ctx.globalAlpha = Math.min(1, introT / 0.4);
     ctx.fillStyle = "rgba(8,10,16,0.6)";
@@ -948,7 +1007,7 @@ function handleRealtime(m) {
       if (typeof d.to === "number" && d.to > level) {
         deaths = d.deaths != null ? d.deaths : deaths;
         gemsGot = d.gems != null ? d.gems : gemsGot;
-        applyAdvance(d.to);
+        applyAdvance(d.to, d.t);
       }
       break;
     case "world":
@@ -979,6 +1038,69 @@ setInterval(() => {
     lvl: level,
   });
 }, 50);
+
+// ── Reconnection (self-healing) ───────────────────────────
+// The pause overlay must clear no matter WHICH recovery signal the SDK fires —
+// on mobile webviews a background/foreground drop often restores the socket
+// silently without re-firing onReconnected/onSync, which would otherwise leave
+// the game frozen on "Reconnecting…" forever. A watchdog polls the real
+// connection state and heals independently of any single event.
+let pausedSince = 0;
+
+function showReconnecting() {
+  if (!isMultiplayer || !partnerHere) return;
+  if (!netPaused) pausedSince = Date.now();
+  netPaused = true;
+  pauseText.textContent = "Reconnecting…";
+  pauseOverlay.hidden = false;
+}
+
+function recoverFromPause() {
+  if (!netPaused) return;
+  netPaused = false;
+  pausedSince = 0;
+  pauseOverlay.hidden = true;
+  try { Usion.game.requestSync(); } catch (_) {}
+  if (players[0] === myId) sendWorld(); else sendRT("hello", {});
+}
+
+function reallyConnected() {
+  try {
+    if (typeof Usion.game.getConnectionState === "function") {
+      const cs = Usion.game.getConnectionState();
+      if (cs === "disconnected" || cs === "rejoining") return false;
+      if (cs === "connected" || cs === "reconnected") return true;
+    }
+  } catch (_) {}
+  try { if (typeof Usion.game.isConnected === "function") return !!Usion.game.isConnected(); } catch (_) {}
+  return false;
+}
+
+// Watchdog: while paused, heal as soon as the socket is truly back; and if we
+// stay stuck far too long, fall back to solo control so the game is never bricked.
+setInterval(() => {
+  if (!netPaused || !window.Usion || !Usion.game) return;
+  if (reallyConnected()) { recoverFromPause(); return; }
+  if (pausedSince && Date.now() - pausedSince > 20000) {
+    // 20s with no socket — release to solo so the player can keep going.
+    netPaused = false;
+    pausedSince = 0;
+    pauseOverlay.hidden = true;
+    partnerHere = false;
+    soloControlBoth = true;
+    btnSwap.hidden = false;
+    activeChar = myChar;
+    showToast("Lost connection — you control both heroes (⇄)");
+  }
+}, 1200);
+
+// Coming back to the foreground: proactively verify the socket rather than
+// waiting for an event that may never arrive.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !isMultiplayer) return;
+  if (netPaused && reallyConnected()) recoverFromPause();
+  else if (partnerHere) { try { Usion.game.requestSync(); } catch (_) {} }
+});
 
 // ── Overlays ──────────────────────────────────────────────
 function showWaiting() { waitingOverlay.hidden = false; }
@@ -1068,25 +1190,22 @@ function registerGameHandlers() {
       if (gs.lvl !== level || !running) applyWorld({ lvl: gs.lvl, deaths: gs.deaths, gems: gs.gems });
     }
     netPaused = false;
+    pausedSince = 0;
     pauseOverlay.hidden = true;
   });
 
-  Usion.game.onDisconnect(() => {
-    if (!isMultiplayer || !partnerHere) return;
-    netPaused = true;
-    pauseText.textContent = "Reconnecting…";
-    pauseOverlay.hidden = false;
-  });
+  Usion.game.onDisconnect(() => showReconnecting());
+  Usion.game.onReconnect(() => { try { Usion.game.requestSync(); } catch (_) {} });
+  Usion.game.onReconnected(() => recoverFromPause());
 
-  Usion.game.onReconnect(() => {
-    try { Usion.game.requestSync(); } catch (_) {}
-  });
-
-  Usion.game.onReconnected(() => {
-    netPaused = false;
-    pauseOverlay.hidden = true;
-    if (players[0] === myId) sendWorld(); else sendRT("hello", {});
-  });
+  // Unified reconnection lifecycle (SDK ≥ 2.16) — the most reliable signal
+  // across all transports; drives the "Reconnecting…" UX and self-heal.
+  if (typeof Usion.game.onConnectionState === "function") {
+    Usion.game.onConnectionState(s => {
+      if (s === "disconnected" || s === "rejoining") showReconnecting();
+      else if (s === "connected" || s === "reconnected") recoverFromPause();
+    });
+  }
 
   Usion.game.onRoomAssigned(() => {
     // Solo play promoted to a hosted room via the Share button.
@@ -1157,12 +1276,16 @@ setTimeout(() => {
   startGame();
 }, 1200);
 
+loadBestTimes();
 resize();
 requestAnimationFrame(frame);
 
 // ── Debug hooks (local testing only) ──────────────────────
 window.FW = {
   load: n => { loadLevel(clamp(n - 1, 0, TOTAL_LEVELS - 1)); running = true; },
+  timer: () => ({ mapTime, mapTimes: mapTimes.slice(), best: Object.assign({}, bestTimes) }),
+  setMapTime: s => { mapTime = s; },
+  clearBest: () => { bestTimes = {}; saveBestTimes(); },
   tp: (k, tx, ty) => { const h = chars[k]; h.x = tx * T + 6; h.y = ty * T + T - CHAR_H; h.vx = 0; h.vy = 0; },
   state: () => ({ level: level + 1, deaths, gemsGot, active: activeChar, f: { x: chars.f.x, y: chars.f.y, dead: chars.f.dead, atDoor: chars.f.atDoor }, w: { x: chars.w.x, y: chars.w.y, dead: chars.w.dead, atDoor: chars.w.atDoor } }),
   input,
@@ -1170,4 +1293,14 @@ window.FW = {
   step: n => { for (let i = 0; i < (n || 1); i++) simStep(); draw(); },
   flags: () => ({ running, paused, ended, netPaused, resetPending, acc, frames: window.__frames || 0, grounded: chars && chars.f.grounded, vy: chars && chars.f.vy, coyote: chars && chars.f.coyote }),
   chans: () => ({ levers: L.leverOn, plates: L.plates.map(p => [p.ch, p.pressed]), gates: L.gates.map(g => g.open), lifts: L.lifts.map(f => [f.px, f.py]) }),
+  // reconnection state machine (testing the stuck-overlay fix)
+  net: {
+    setMP: (mp, partner) => { isMultiplayer = !!mp; partnerHere = !!partner; },
+    show: () => showReconnecting(),
+    recover: () => recoverFromPause(),
+    connected: () => reallyConnected(),
+    pausedSince: () => pausedSince,
+    backdate: ms => { pausedSince = Date.now() - ms; },
+    state: () => ({ isMultiplayer, partnerHere, netPaused, pausedSince, overlayHidden: pauseOverlay.hidden }),
+  },
 };
