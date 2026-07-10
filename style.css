@@ -2,6 +2,10 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* author display rules (.overlay { display:flex } etc.) must not defeat the
+   hidden attribute — without this the end/waiting overlays show at boot */
+[hidden] { display: none !important; }
+
 html, body {
   width: 100%; height: 100%;
   background: #0c0f16;
