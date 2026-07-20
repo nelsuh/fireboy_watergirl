@@ -56,7 +56,8 @@ let level = 0;              // 0-based index into MAPS
 let L = null;               // parsed current level
 let chars = null;           // { f: hero, w: hero }
 let deaths = 0;
-let gemsGot = 0;            // banked gems (completed levels) + current takes
+let gemsGot = 0;            // DERIVED total = bankedGems + gems taken on the current map
+let bankedGems = 0;         // gems locked in from COMPLETED maps (never rolled back)
 let startedAt = 0, finishedAt = 0;
 let running = false, ended = false, paused = false;
 let introT = 0;             // level-name splash timer
@@ -188,11 +189,16 @@ function respawnHeroes() {
   }
 }
 
+// Gem accounting is DERIVED from the taken-set, never an increment/decrement
+// counter — so it's idempotent and self-heals when a "gem" packet is lost and
+// gets reconciled later over the pos stream (no double-counting, no drift).
+function currentTakes() { let n = 0; for (const g of L.gems) if (g.taken) n++; return n; }
+function recomputeGems() { gemsGot = bankedGems + currentTakes(); }
+
 // Restore the current level after a death (gems of this level respawn).
 function resetLevel() {
-  let back = 0;
-  for (const g of L.gems) if (g.taken) { g.taken = false; back++; }
-  gemsGot = Math.max(0, gemsGot - back);
+  for (const g of L.gems) g.taken = false;
+  recomputeGems();
   for (const g of L.gates) g.open = 0;
   L.leverOn = {};
   for (const f of L.lifts) { f.px = f.x0; f.py = f.y0; }
@@ -413,7 +419,7 @@ function stepHero(k, dt) {
     const gx = g.x * T + T / 2, gy = g.y * T + T / 2;
     const cx = h.x + CHAR_W / 2, cy = h.y + CHAR_H / 2;
     if (Math.abs(gx - cx) < 22 && Math.abs(gy - cy) < 24) {
-      g.taken = true; gemsGot++;
+      g.taken = true; recomputeGems();
       spawnBurst(gx, gy, g.kind === "r" ? "#ff8a5a" : "#6db9ff", 10);
       if (isMultiplayer) sendRT("gem", { lvl: level, i });
     }
@@ -488,9 +494,11 @@ function applyAdvance(to, completedTime) {
   const prev = bestTimes[finishedMap];
   const isBest = prev == null || secs < prev;
   if (isBest) { bestTimes[finishedMap] = secs; saveBestTimes(); }
+  bankedGems = gemsGot;      // the finished map's gems are now permanent
   if (to >= TOTAL_LEVELS) { showVictory(); return; }
   showToast(`Map ${finishedMap + 1} cleared — ${fmtTime(secs)}${isBest ? "  ★ new best!" : ""}`);
   loadLevel(to);
+  recomputeGems();           // fresh map: gemsGot === bankedGems (0 takes yet)
 }
 
 function showVictory() {
@@ -514,7 +522,7 @@ function showVictory() {
 function restartAll(broadcast) {
   endOverlay.hidden = true;
   ended = false;
-  deaths = 0; gemsGot = 0;
+  deaths = 0; gemsGot = 0; bankedGems = 0;
   mapTimes = [];
   startedAt = Date.now();
   lastRestartAt = Date.now();
@@ -1000,10 +1008,13 @@ function sendWorld() {
 function applyWorld(d) {
   if (typeof d.lvl !== "number") return;
   deaths = d.deaths || 0;
+  bankedGems = d.gems || 0;
   gemsGot = d.gems || 0;
   if (d.lvl >= TOTAL_LEVELS) { showVictory(); return; }
   loadLevel(d.lvl, { silent: false });
   if (Array.isArray(d.taken)) for (const i of d.taken) if (L.gems[i]) L.gems[i].taken = true;
+  bankedGems = (d.gems || 0) - currentTakes();   // total − this map's takes = banked-from-prior-maps
+  recomputeGems();
   if (d.levers) L.leverOn = Object.assign({}, d.levers);
 }
 
@@ -1020,6 +1031,14 @@ function handleRealtime(m) {
       if (players[0] !== myId && typeof d.lvl === "number" && d.lvl > level && d.lvl < TOTAL_LEVELS) {
         loadLevel(d.lvl);
       }
+      // Reconcile the partner's collected gems off the frequent pos stream — a
+      // dropped "gem" event self-heals here within ~50ms (idempotent: only marks
+      // gems not already taken, then re-derives the count). Skipped mid-death.
+      if (d.lvl === level && !resetPending && Array.isArray(d.gt)) {
+        let changed = false;
+        for (const gi of d.gt) { const g = L.gems[gi]; if (g && !g.taken) { g.taken = true; changed = true; } }
+        if (changed) recomputeGems();
+      }
       if (!partnerHere) {
         partnerHere = true; soloControlBoth = false; btnSwap.hidden = true;
         hideWaiting(); stopHelloRetry(); running = true;
@@ -1029,7 +1048,7 @@ function handleRealtime(m) {
       if (d.lvl === level) L.leverOn[d.ch] = !!d.on;
       break;
     case "gem":
-      if (d.lvl === level && L.gems[d.i] && !L.gems[d.i].taken) { L.gems[d.i].taken = true; gemsGot++; }
+      if (d.lvl === level && L.gems[d.i] && !L.gems[d.i].taken) { L.gems[d.i].taken = true; recomputeGems(); }
       break;
     case "death":
       if (d.lvl === level && !resetPending) {
@@ -1082,8 +1101,22 @@ setInterval(() => {
     vx: Math.round(h.vx), vy: Math.round(h.vy),
     f: h.face, g: h.grounded ? 1 : 0, d: h.atDoor, dead: h.dead ? 1 : 0,
     lvl: level,
+    gt: myTakenGems(),          // my collected gems this map — lets the partner self-heal a lost "gem" event
   });
 }, 50);
+
+// Indices of MY-colour gems I've taken this map (Fireboy owns red, Watergirl blue).
+// Each client is the authority for its own colour, so this never fights the peer.
+function myTakenGems() {
+  if (!L || !L.gems) return [];
+  const mine = (myChar === "f");
+  const out = [];
+  for (let i = 0; i < L.gems.length; i++) {
+    const g = L.gems[i];
+    if (g.taken && ((g.kind === "r") === mine)) out.push(i);
+  }
+  return out;
+}
 
 // ── Reconnection (self-healing) ───────────────────────────
 // The pause overlay must clear no matter WHICH recovery signal the SDK fires —
