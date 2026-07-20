@@ -82,6 +82,7 @@ let playerNames = {};
 let remote = { x: 0, y: 0, vx: 0, vy: 0, face: 1, g: 1, d: 0, dead: 0, lvl: -1, fresh: false };
 let netPaused = false;
 let lastRestartAt = 0;
+let helloTimer = 0;         // guest → host handshake retry (realtime is lossy)
 
 // FX
 let particles = [];         // {x,y,vx,vy,life,max,col,r}
@@ -950,6 +951,34 @@ function sendRT(type, data) {
   try { if (window.Usion && Usion.game) Usion.game.realtime(type, data); } catch (_) {}
 }
 
+// Assign hero roles from the AUTHORITATIVE roster (players[0] = host = Fireboy).
+// Must be driven by the SDK roster (onJoined / onPlayerJoined), NOT config alone —
+// the invited guest's config.playerIds can be incomplete/mis-ordered at launch,
+// which would make the guest think IT is the host, pick remoteChar "w", and then
+// silently drop every host "pos" packet (c:"f") → stuck on the waiting card.
+function assignRoles() {
+  myChar = players[0] === myId ? "f" : "w";
+  remoteChar = myChar === "f" ? "w" : "f";
+  if (!partnerHere) activeChar = myChar;
+}
+
+// The guest keeps pinging "hello" until the host's "world" (or a "pos") lands,
+// because realtime() is a lossy broadcast — a single dropped handshake packet
+// must never strand the guest. Self-cancels as soon as the partner is present.
+function startHelloRetry() {
+  if (players[0] === myId) return;          // host never sends hello
+  stopHelloRetry();
+  let tries = 0;
+  const ping = () => {
+    if (partnerHere || players[0] === myId) { stopHelloRetry(); return; }
+    sendRT("hello", {});
+    if (++tries >= 45) stopHelloRetry();     // ~45s, then leave the solo button as the escape hatch
+  };
+  ping();
+  helloTimer = setInterval(ping, 1000);
+}
+function stopHelloRetry() { if (helloTimer) { clearInterval(helloTimer); helloTimer = 0; } }
+
 function hostCheckpoint(lvl) {
   // Server-side recovery snapshot — host only (platform rule).
   if (!isMultiplayer || players[0] !== myId) return;
@@ -991,7 +1020,10 @@ function handleRealtime(m) {
       if (players[0] !== myId && typeof d.lvl === "number" && d.lvl > level && d.lvl < TOTAL_LEVELS) {
         loadLevel(d.lvl);
       }
-      if (!partnerHere) { partnerHere = true; hideWaiting(); }
+      if (!partnerHere) {
+        partnerHere = true; soloControlBoth = false; btnSwap.hidden = true;
+        hideWaiting(); stopHelloRetry(); running = true;
+      }
       break;
     case "lever":
       if (d.lvl === level) L.leverOn[d.ch] = !!d.on;
@@ -1017,11 +1049,21 @@ function handleRealtime(m) {
     case "world":
       applyWorld(d);
       partnerHere = true;
+      soloControlBoth = false;
+      btnSwap.hidden = true;
       hideWaiting();
+      stopHelloRetry();
       running = true;
       break;
     case "hello":
-      sendWorld();
+      // Host answers every hello with a full world snapshot (idempotent), and
+      // records the partner so it simulates only its own hero from now on.
+      if (m.player_id && !players.includes(m.player_id)) players.push(m.player_id);
+      if (players[0] === myId) {
+        if (!partnerHere) { partnerHere = true; soloControlBoth = false; btnSwap.hidden = true; }
+        assignRoles();
+        sendWorld();
+      }
       break;
     case "restart":
       if (Date.now() - lastRestartAt > 1500) restartAll(false);
@@ -1162,8 +1204,8 @@ function registerGameHandlers() {
     partnerHere = true;
     soloControlBoth = false;
     btnSwap.hidden = true;
-    myChar = players[0] === myId ? "f" : "w";
-    remoteChar = myChar === "f" ? "w" : "f";
+    stopHelloRetry();
+    assignRoles();
     activeChar = myChar;
     hideWaiting();
     if (players[0] === myId) {
@@ -1183,8 +1225,14 @@ function registerGameHandlers() {
     showToast("Partner left — you control both heroes (⇄)");
   });
 
-  Usion.game.onJoined(() => {
-    if (players[0] !== myId) sendRT("hello", {});
+  Usion.game.onJoined((d) => {
+    // The join ack carries the AUTHORITATIVE roster (players[0] = host). Trust it
+    // over config.playerIds, which can be incomplete/mis-ordered for an invited
+    // guest — that was the "guest stuck on the waiting card" bug.
+    if (d && d.player_ids && d.player_ids.length) players = d.player_ids.slice();
+    if (isMultiplayer) assignRoles();
+    if (players[0] !== myId) startHelloRetry();   // guest: keep asking until world/pos lands
+    else if (partnerHere) sendWorld();            // host: re-arm a (re)joining guest
   });
 
   Usion.game.onSync(d => {
@@ -1224,22 +1272,18 @@ function registerGameHandlers() {
 
 async function setupMultiplayer(roomId) {
   await Usion.game.connect();
-  await Usion.game.join(roomId);
+  const res = await Usion.game.join(roomId);
+  // Prefer the authoritative roster from the join result over config.playerIds.
+  if (res && Array.isArray(res.player_ids) && res.player_ids.length) players = res.player_ids.slice();
   isMultiplayer = true;
-  myChar = players[0] === myId ? "f" : "w";
-  remoteChar = myChar === "f" ? "w" : "f";
-  activeChar = myChar;
   soloControlBoth = false;
   btnSwap.hidden = true;
+  assignRoles();            // best-effort; onJoined finalizes once the ack lands
   loadLevel(startLevelParam());
-  if (players.length >= 2 || players[0] !== myId) {
-    // roster already known or I'm the guest — ask for state, play as soon as it lands
-    if (players[0] !== myId) { sendRT("hello", {}); showWaiting(); }
-    else { showWaiting(); running = true; }
-  } else {
-    showWaiting();
-    running = true;         // host plays while waiting; partner join resets the map
-  }
+  showWaiting();
+  running = true;           // host plays while waiting; guest sits behind the overlay until synced
+  // The guest keeps asking the host for the world until it arrives (lossy realtime).
+  if (players[0] !== myId) startHelloRetry();
 }
 
 let initFired = false, bootedStandalone = false;
