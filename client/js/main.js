@@ -52,25 +52,16 @@ function boot() {
 function onReady() {
   const who = $('whoami');
   if (who) who.textContent = me.userName ? `Playing as ${me.userName}` : (me.embedded ? '' : 'Guest');
-  wirePlay();
-}
-
-// -------------------------------------------------------------- start overlay --
-function wirePlay() {
-  const playBtn = $('play');
-  if (!playBtn || playBtn.__wired) return;
-  playBtn.__wired = true;
-  playBtn.addEventListener('click', () => {
-    if (started) return;
-    started = true;
-    try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch { /* iframe */ }
-    $('start').style.display = 'none';
-    connectAndPlay();
-  });
+  // "Play again" on the victory card still needs wiring.
   $('againBtn')?.addEventListener('click', () => {
     $('endOverlay').hidden = true;
     if (net) net.sendJson({ t: 'restart' });
   });
+  // Start card removed — jump straight into the game as soon as identity is ready.
+  if (started) return;
+  started = true;
+  const start = $('start'); if (start) start.style.display = 'none';
+  connectAndPlay();
 }
 
 let toastTimer = 0;

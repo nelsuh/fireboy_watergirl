@@ -22,14 +22,10 @@
     <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
   </div>
 
-  <!-- Start / PLAY -->
-  <div id="start" class="overlay">
+  <!-- Start card removed — the game auto-starts on load. Kept hidden so the
+       (few) `$('start').style.display='none'` calls stay harmless no-ops. -->
+  <div id="start" class="overlay" hidden>
     <div class="card">
-      <div class="title-emoji">🔥💧</div>
-      <h1>Fire &amp; Water</h1>
-      <div class="sub">Co-op — reach both doors together</div>
-      <p>Move with ◀ ▶ &nbsp;·&nbsp; jump with ▲</p>
-      <button class="btn btn-primary" id="play">PLAY</button>
       <div id="whoami"></div>
     </div>
   </div>
