@@ -1021,6 +1021,11 @@ function applyWorld(d) {
 function handleRealtime(m) {
   const t = m.action_type, d = m.action_data || {};
   if (m.player_id === myId) return;
+  // A packet from the partner PROVES the socket is alive — clear a stale
+  // "Reconnecting…" overlay instantly, independent of SDK reconnect events
+  // (which don't always fire on mobile webviews). The partner streams "pos"
+  // ~every 50ms, so recovery is near-immediate whenever they're still playing.
+  if (netPaused) recoverFromPause();
   switch (t) {
     case "pos":
       if (d.c !== remoteChar) return;
@@ -1143,6 +1148,17 @@ function recoverFromPause() {
   if (players[0] === myId) sendWorld(); else sendRT("hello", {});
 }
 
+// Whether the SDK can introspect the socket at all on this transport. When it
+// can't (common in mobile webviews), we must NOT treat "unknown" as "offline" —
+// that was the stuck-overlay bug: recovery waited on a probe that never answers.
+function canProbeConnection() {
+  try {
+    return typeof Usion.game.getConnectionState === "function" ||
+           typeof Usion.game.isConnected === "function";
+  } catch (_) { return false; }
+}
+
+// Positive "socket is up" — only true when the SDK actually confirms it.
 function reallyConnected() {
   try {
     if (typeof Usion.game.getConnectionState === "function") {
@@ -1155,12 +1171,33 @@ function reallyConnected() {
   return false;
 }
 
+// Positive "socket is down" — only true when the SDK actually confirms it.
+// Unknown → false, so we never hang on a blind transport.
+function positivelyDisconnected() {
+  try {
+    if (typeof Usion.game.getConnectionState === "function") {
+      const cs = Usion.game.getConnectionState();
+      if (cs === "disconnected" || cs === "rejoining") return true;
+      if (cs === "connected" || cs === "reconnected") return false;
+    }
+  } catch (_) {}
+  try { if (typeof Usion.game.isConnected === "function") return !Usion.game.isConnected(); } catch (_) {}
+  return false;
+}
+
 // Watchdog: while paused, heal as soon as the socket is truly back; and if we
 // stay stuck far too long, fall back to solo control so the game is never bricked.
 setInterval(() => {
   if (!netPaused || !window.Usion || !Usion.game) return;
   if (reallyConnected()) { recoverFromPause(); return; }
-  if (pausedSince && Date.now() - pausedSince > 20000) {
+  const el = pausedSince ? Date.now() - pausedSince : 0;
+  // Blind transport (no way to probe the socket) that also isn't firing reconnect
+  // events: don't hang on "Reconnecting…" indefinitely. After a short grace, heal
+  // optimistically — an inbound packet or foreground would already have healed us,
+  // and a genuine ongoing disconnect keeps re-asserting via onDisconnect. This is
+  // the mini_golf-proven behaviour: un-freeze and let incoming data correct.
+  if (el > 6000 && !canProbeConnection() && !positivelyDisconnected()) { recoverFromPause(); return; }
+  if (pausedSince && el > 20000) {
     // 20s with no socket — release to solo so the player can keep going.
     netPaused = false;
     pausedSince = 0;
@@ -1173,12 +1210,18 @@ setInterval(() => {
   }
 }, 1200);
 
-// Coming back to the foreground: proactively verify the socket rather than
-// waiting for an event that may never arrive.
+// Coming back to the foreground is the MOST reliable "user is back" signal on
+// mobile — recover unless the SDK positively reports we're still offline. Waiting
+// for reallyConnected() to turn true (as before) hung forever on transports that
+// can't probe the socket.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden || !isMultiplayer) return;
-  if (netPaused && reallyConnected()) recoverFromPause();
-  else if (partnerHere) { try { Usion.game.requestSync(); } catch (_) {} }
+  if (netPaused) {
+    if (!positivelyDisconnected()) recoverFromPause();
+    else { try { Usion.game.requestSync(); } catch (_) {} }
+  } else if (partnerHere) {
+    try { Usion.game.requestSync(); } catch (_) {}
+  }
 });
 
 // ── Overlays ──────────────────────────────────────────────
