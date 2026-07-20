@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Fire &amp; Water</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div id="rot">
+  <canvas id="board"></canvas>
+
+  <div id="status"></div>
+
+  <!-- Touch controls (landscape): move on the left, jump on the right -->
+  <div class="pad pad-left">
+    <button class="ctl" id="btnLeft"  aria-label="left">◀</button>
+    <button class="ctl" id="btnRight" aria-label="right">▶</button>
+  </div>
+  <div class="pad pad-right">
+    <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
+  </div>
+
+  <!-- Start / PLAY -->
+  <div id="start" class="overlay">
+    <div class="card">
+      <div class="title-emoji">🔥💧</div>
+      <h1>Fire &amp; Water</h1>
+      <div class="sub">Co-op — reach both doors together</div>
+      <p>Move with ◀ ▶ &nbsp;·&nbsp; jump with ▲</p>
+      <button class="btn btn-primary" id="play">PLAY</button>
+      <div id="whoami"></div>
+    </div>
+  </div>
+
+  <!-- Waiting for partner -->
+  <div id="waitingOverlay" class="overlay" hidden>
+    <div class="card">
+      <div class="spinner"></div>
+      <p id="waitingText">Waiting for your partner…</p>
+    </div>
+  </div>
+
+  <!-- Reconnecting -->
+  <div id="pauseOverlay" class="overlay" hidden>
+    <div class="card">
+      <div class="spinner"></div>
+      <p id="pauseText">Reconnecting…</p>
+    </div>
+  </div>
+
+  <!-- Victory -->
+  <div id="endOverlay" class="overlay" hidden>
+    <div class="card">
+      <div class="end-emoji" id="endEmoji">🏆</div>
+      <h2 id="endTitle">You did it!</h2>
+      <p id="endStats"></p>
+      <button class="btn btn-primary" id="againBtn">Play again</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+</div>
+
+<script src="https://usions.com/usion-sdk.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

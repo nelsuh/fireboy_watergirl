@@ -1,0 +1,19 @@
+{
+  "name": "fireboy-watergirl",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fire & Water — co-op platformer. Direct-mode authoritative server + client prediction (tank template).",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node server/server.js",
+    "test": "node server/smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "jose": "^5.9.6",
+    "ws": "^8.18.0"
+  }
+}
