@@ -10,7 +10,11 @@ export const IS_PROD = NODE_ENV === 'production';
 
 // Usion platform integration (direct mode). The game server never talks to the
 // backend except to fetch the JWKS public keys used to verify access tokens.
-export const SERVICE_ID = env.SERVICE_ID || 'fireboy-watergirl';
+// The platform's canonical service id for this game (from config.serviceId in
+// the host — the service was registered with an auto-generated hashed slug, NOT
+// the clean "fireboy-watergirl"). The access token's audience is
+// `usion-game-service:<this>`, so it MUST match or every token is rejected 4002.
+export const SERVICE_ID = env.SERVICE_ID || 'fireboy-and-watergirl-dcb7ed3a';
 export const API_URL = (env.API_URL || 'https://mobile.mongolai.mn').replace(/\/$/, '');
 export const JWKS_URL = env.JWKS_URL || `${API_URL}/.well-known/jwks.json`;
 

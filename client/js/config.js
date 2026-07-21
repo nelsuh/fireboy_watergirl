@@ -6,7 +6,9 @@
 // client directly in a browser — they only connect if the server runs with
 // DEV_ALLOW_UNSIGNED=1 (never in production).
 
-export const SERVICE_ID = 'fireboy-watergirl';
+// The platform's canonical service id (see server/config.js). At runtime the
+// client prefers window.Usion.config.serviceId; this is the standalone fallback.
+export const SERVICE_ID = 'fireboy-and-watergirl-dcb7ed3a';
 
 // Railway game server, used only for standalone/dev connects. Update at deploy.
 export const DEV_SERVER_URL = 'wss://fireboywatergirl-production.up.railway.app/ws';
