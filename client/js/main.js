@@ -72,16 +72,36 @@ function toast(text, ms = 2400) {
   toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }
 
+// Am I a real (invited) multiplayer session? Derive from the launch MODE, never
+// from the presence of a roomId — GameTok forces mode:'single' but still hands us
+// an auto `standalone_` room for SDK plumbing (see extra/gametok.md). Treating
+// that room as multiplayer was routing GameTok into the networked one-hero path
+// (no swap button). Only a genuine chat game-invite is multiplayer.
+function launchedMultiplayer() {
+  try {
+    const U = window.Usion;
+    let lp = {};
+    if (U && typeof U.getLaunchParams === 'function') lp = U.getLaunchParams() || {};
+    if (lp.mode === 'single') return false;
+    if (lp.mode === 'multiplayer') return true;
+    if (U && U.game && typeof U.game.isMultiplayer === 'function') return !!U.game.isMultiplayer();
+    return false;   // unknown → solo (safe: swap-enabled both-hero practice)
+  } catch { return false; }
+}
+
 // ------------------------------------------------------------- mode selection --
 function connectAndPlay() {
   // Standalone/dev override: ?dev=1 forces a direct WS connect with a dev token
   // (server must run with DEV_ALLOW_UNSIGNED=1). Handy for local two-tab testing.
   if (/[?&]dev=1/.test(location.search)) { startNet(() => Promise.resolve(devUrl())); return; }
-  if (me.embedded && me.roomId) {
+  if (me.embedded && launchedMultiplayer() && me.roomId) {
+    // Genuine chat game-invite: host-authoritative 2-seat networked match.
     startNet(() => platformUrl(me.roomId));
-  } else if (me.embedded && !me.roomId) {
+  } else if (me.embedded) {
+    // GameTok / Explore solo: local both-hero co-op with the ⇄ swap button.
+    // (Explore can still promote to a live room via the host Share button.)
     startSoloPractice();
-    toast('Practice mode — tap Share above to play with a friend', 3600);
+    if (!me.roomId) toast('Practice mode — tap Share above to play with a friend', 3600);
   } else {
     startNet(() => Promise.resolve(devUrl()));
   }
