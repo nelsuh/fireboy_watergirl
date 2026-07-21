@@ -20,17 +20,26 @@ export class Renderer {
     this.dpr = 1; this.scale = 1; this.ox = 0; this.oy = 0; this.cw = 0; this.chh = 0;
     this.resize();
     window.addEventListener('resize', () => setTimeout(() => this.resize(), 50));
+    window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 120));
   }
 
   resize() {
+    // The game plays in LANDSCAPE. We never rotate the canvas into portrait any
+    // more (that sideways view was disorienting). In portrait we render upright
+    // (smaller) and show a "turn your phone sideways" hint; rotating the device to
+    // landscape gives the full-screen game + on-screen gamepad.
     const portrait = window.innerHeight > window.innerWidth * 1.05;
-    this.rot.classList.toggle('rotated', portrait);
+    this.rot.classList.remove('rotated');
+    const hint = document.getElementById('rotateHint');
+    if (hint) hint.hidden = !portrait;
     const w = this.rot.clientWidth, h = this.rot.clientHeight;
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this.cw = w; this.chh = h;
     this.canvas.width = Math.round(w * this.dpr);
     this.canvas.height = Math.round(h * this.dpr);
-    const padH = Math.min(h * 0.22, 96);
+    // Reserve a little bottom space so the on-screen buttons don't sit on top of
+    // the play area; less in landscape (buttons tuck into the side margins).
+    const padH = portrait ? Math.min(h * 0.16, 84) : Math.min(h * 0.14, 78);
     this.scale = Math.min(w / WW, (h - padH) / WH);
     this.ox = (w - WW * this.scale) / 2;
     this.oy = Math.max(0, (h - padH - WH * this.scale) / 2);

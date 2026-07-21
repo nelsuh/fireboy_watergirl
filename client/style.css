@@ -58,6 +58,16 @@ html, body {
   border-color: rgba(255,200,80,.45); color: #ffd76e;
 }
 
+/* Portrait "turn your phone" nudge (a landscape game). Slim top banner, does not
+   block taps so the upright fallback stays playable. */
+#rotateHint {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+  padding: 10px 14px; text-align: center;
+  background: rgba(8,10,16,.9); color: #ffe08a;
+  font-size: 14px; font-weight: 600; letter-spacing: .2px;
+  pointer-events: none;
+}
+
 /* ── HUD status (ping / connection) ─────────────────────── */
 #status { position: absolute; top: 8px; left: 10px; z-index: 6; font-size: 12px; color: rgba(255,255,255,.5); }
 #status .bad { color: #ff9a8a; }

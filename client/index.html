@@ -62,6 +62,11 @@
   <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
 </div>
 
+<!-- Portrait nudge: this is a landscape game, so ask the player to turn the phone
+     sideways. Non-blocking (pointer-events:none) — the upright game still plays
+     behind it in case the device can't rotate. Hidden in landscape. -->
+<div id="rotateHint" hidden>↻&nbsp; Turn your phone sideways for full-screen play</div>
+
 <script src="https://usions.com/usion-sdk.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
