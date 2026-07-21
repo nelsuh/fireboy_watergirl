@@ -224,13 +224,32 @@ function showVictory(total, per) {
 const fmt = (s) => { s = Math.floor(s || 0); return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60); };
 
 // ------------------------------------------------------------- solo practice --
-// No server: run the shared sim locally, human drives Fireboy, Watergirl idles.
-// A taste of movement until the host's Share promotes into a real match.
-let soloActive = false, soloRAF = 0;
+// No server: run the shared sim locally. One human drives BOTH heroes, switching
+// the controlled one with the ⇄ button (the idle hero holds still — it can still
+// stand on plates). This makes a solo/GameTok session actually completable.
+// Promoted into a real 2-seat match by the host's Share button.
+let soloActive = false, soloRAF = 0, soloChar = 'f', swapBound = false;
+function bindSwap() {
+  if (swapBound) return;
+  const el = $('btnSwap'); if (!el) return;
+  swapBound = true;
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (!soloActive) return;
+    soloChar = soloChar === 'f' ? 'w' : 'f';
+  });
+  window.addEventListener('keydown', (e) => {
+    if (!soloActive) return;
+    if (e.key === 'Tab' || e.key === 's') { e.preventDefault(); soloChar = soloChar === 'f' ? 'w' : 'f'; }
+  });
+}
 function startSoloPractice() {
   if (soloActive || netStarted) return;
   soloActive = true;
+  soloChar = 'f';
   $('start').style.display = 'none';
+  bindSwap();
+  const swap = $('btnSwap'); if (swap) swap.hidden = false;
   const world = makeWorld(0);
   let last = performance.now(), acc = 0, intro = 1.4, pl = 0;
   function frame(now) {
@@ -239,17 +258,23 @@ function startSoloPractice() {
     let dt = (now - last) / 1000; last = now;
     if (dt > 0.25) { dt = 0; acc = 0; }
     acc += dt; if (acc > DT * 6) acc = DT;
-    while (acc >= DT) { acc -= DT; stepServer(world, { f: input.snapshot(), w: {} }, DT); }
+    const drive = input.snapshot();
+    const inputs = soloChar === 'f' ? { f: drive, w: {} } : { f: {}, w: drive };
+    while (acc >= DT) { acc -= DT; stepServer(world, inputs, DT); }
     if (world.level !== pl) { pl = world.level; intro = 1.4; }
     intro = Math.max(0, intro - dt);
     renderer.draw(world, dt, {
-      myKey: 'f', remoteKey: 'w', myRenderPos: null,
+      myKey: soloChar, remoteKey: soloChar === 'f' ? 'w' : 'f', myRenderPos: null,
       deaths: world.deaths, mapTime: world.mapTime, best: bestTimes[world.level],
       partnerHere: false, intro,
     });
   }
   soloRAF = requestAnimationFrame(frame);
 }
-function stopSoloPractice() { soloActive = false; if (soloRAF) cancelAnimationFrame(soloRAF); soloRAF = 0; }
+function stopSoloPractice() {
+  soloActive = false;
+  if (soloRAF) cancelAnimationFrame(soloRAF); soloRAF = 0;
+  const swap = $('btnSwap'); if (swap) swap.hidden = true;
+}
 
 boot();

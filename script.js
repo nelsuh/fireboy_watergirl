@@ -1391,11 +1391,15 @@ Usion.init(async function (config) {
   if (!launchedSolo(config) && config.roomId) {
     await setupMultiplayer(config.roomId);
   } else {
-    // Explore / GameTok solo: zero-tap start, you drive both heroes.
+    // Explore / GameTok solo: zero-tap start, you drive BOTH heroes (swap ⇄).
+    // Do NOT connect/join here. Joining config.roomId can pull other GameTok
+    // viewers into our room, whose stray packets flip us to one-hero control and
+    // HIDE the swap button. Solo→host promotion still works via the
+    // onRoomAssigned handler registered above. (Mirrors mini_golf's solo boot.)
+    isMultiplayer = false;
+    partnerHere = false;
     soloControlBoth = true;
     btnSwap.hidden = false;
-    // still connect so a Share-button promotion can find us
-    try { await Usion.game.connect(); if (config.roomId) await Usion.game.join(config.roomId); } catch (_) {}
     startGame();
   }
 });

@@ -131,17 +131,17 @@ export class Renderer {
   _liquids(world) {
     const ctx = this.ctx;
     for (const q of world.liquids) {
-      const px = q.x * T, py = q.y * T + T * 0.5;
+      const px = q.px, pw = q.pw, py = q.y * T + T * 0.5;
       const col = q.kind === 'F' ? ['#ff6a2a', '#c93a10'] : q.kind === 'W' ? ['#48a7ff', '#1c62c9'] : ['#7ed941', '#3f9a1e'];
       const g = ctx.createLinearGradient(0, py, 0, py + T * 0.5);
       g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
       ctx.fillStyle = g;
       ctx.beginPath();
       ctx.moveTo(px, py + 4 + Math.sin(this.time * 4 + q.x * 1.7) * 2);
-      for (let i = 1; i <= 4; i++) { const wx = px + (T / 4) * i; ctx.lineTo(wx, py + 4 + Math.sin(this.time * 4 + (q.x + i / 4) * 1.7) * 2); }
-      ctx.lineTo(px + T, py + T * 0.5); ctx.lineTo(px, py + T * 0.5); ctx.closePath(); ctx.fill();
+      for (let i = 1; i <= 4; i++) { const wx = px + (pw / 4) * i; ctx.lineTo(wx, py + 4 + Math.sin(this.time * 4 + (q.x + i / 4) * 1.7) * 2); }
+      ctx.lineTo(px + pw, py + T * 0.5); ctx.lineTo(px, py + T * 0.5); ctx.closePath(); ctx.fill();
       ctx.fillStyle = q.kind === 'F' ? 'rgba(255,140,60,0.15)' : q.kind === 'W' ? 'rgba(90,170,255,0.12)' : 'rgba(130,220,70,0.12)';
-      ctx.fillRect(px, py - 10, T, 10);
+      ctx.fillRect(px, py - 10, pw, 10);
     }
   }
 

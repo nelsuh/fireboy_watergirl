@@ -56,11 +56,27 @@ export function loadLevel(world, n) {
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
     const c = M.grid[y][x];
     if (c === 'r' || c === 'b') world.gems.push({ x, y, kind: c, taken: false });
-    else if (c === 'F' || c === 'W' || c === 'G') world.liquids.push({ x, y, kind: c });
     else if (c === 'A') world.spawns.f = { x, y };
     else if (c === 'B') world.spawns.w = { x, y };
     else if (c === 'D') world.doors.f = { x, y };
     else if (c === 'E') world.doors.w = { x, y };
+  }
+  // Liquid pools: merge consecutive same-kind tiles into one pool, then shave
+  // half a tile off wide (>=3) fire/water pools — centered — so they're easier
+  // to clear. Goo (G) lakes keep full tile width. px/pw are pixels. Shared by
+  // server (collision authority) and client (render), so they stay consistent.
+  for (let y = 0; y < ROWS; y++) {
+    let x = 0;
+    while (x < COLS) {
+      const c = M.grid[y][x];
+      if (c === 'F' || c === 'W' || c === 'G') {
+        let n = 1;
+        while (x + n < COLS && M.grid[y][x + n] === c) n++;
+        const eff = (c !== 'G' && n >= 3) ? n - 0.5 : n;
+        world.liquids.push({ x, y, kind: c, px: (x + (n - eff) / 2) * T, pw: eff * T });
+        x += n;
+      } else x++;
+    }
   }
   respawnHeroes(world);
   world.resetPending = false;
@@ -292,8 +308,8 @@ function heroGameplay(world, key, events) {
 
   const feetY = h.y + CHAR_H - 8;
   for (const q of world.liquids) {
-    const qx = q.x * T, qy = q.y * T + T * 0.5;
-    if (h.x + CHAR_W - 4 > qx && h.x + 4 < qx + T && h.y + CHAR_H > qy + 4 && feetY < qy + T) {
+    const qx = q.px, qy = q.y * T + T * 0.5;
+    if (h.x + CHAR_W - 4 > qx && h.x + 4 < qx + q.pw && h.y + CHAR_H > qy + 4 && feetY < qy + T) {
       const fatal = q.kind === 'G' || (q.kind === 'W' && key === 'f') || (q.kind === 'F' && key === 'w');
       if (fatal) { killHero(world, key, q.kind, events); break; }
     }
