@@ -89,10 +89,11 @@ function onReady() {
     if (net) net.sendJson({ t: 'restart' });
   });
   // TEMP debug: what identity/mode did the host hand us?
-  const cm = (window.Usion && window.Usion.config && window.Usion.config.connectionMode) || '?';
-  dbg(`init embedded=${me.embedded} mode=${cm}`);
+  const cfg = (window.Usion && window.Usion.config) || {};
+  dbg(`init embedded=${me.embedded} mode=${cfg.connectionMode || '?'}`);
   dbg(`room=${me.roomId || '(none)'}`);
-  dbg(`user=${me.userId || '?'}`);
+  dbg(`svc cfg=${cfg.serviceId || '?'} const=${SERVICE_ID}`);
+  dbg(`players=${(cfg.playerIds || []).length} tok=${cfg.authToken ? 'y' : 'n'}`);
   // Start card removed — jump straight into the game as soon as identity is ready.
   if (started) return;
   started = true;
@@ -131,21 +132,29 @@ async function platformUrl(roomId) {
   // realtime.connection_mode === 'direct' (see scripts/register_direct.mjs). If
   // it isn't, _fetchDirectAccess yields no usable token and every (re)connect
   // fails — surface WHY in the console instead of looping on a silent spinner.
-  const mode = (window.Usion && window.Usion.config && window.Usion.config.connectionMode) || '?';
-  let access;
-  try {
-    dbg(`fetchDirectAccess svc=${SERVICE_ID}…`);
-    access = await window.Usion.game._fetchDirectAccess({ roomId, serviceId: SERVICE_ID, protocolVersion: '2' });
-  } catch (e) {
-    dbg(`fetchAccess ERR (mode=${mode}): ${e && e.message || e}`);
-    console.error(`[FW] _fetchDirectAccess failed (connectionMode=${mode}, service=${SERVICE_ID}, room=${roomId}):`, e);
-    throw e;
+  // The 400 on _fetchDirectAccess points at a bad request param, most likely a
+  // serviceId that doesn't match the room's real service. Try the authoritative
+  // config.serviceId first, then let the SDK default it, then the hardcoded
+  // constant — logging which shape the backend accepts. (TEMP diagnostic.)
+  const cfgSvc = (window.Usion && window.Usion.config && window.Usion.config.serviceId) || null;
+  const attempts = [
+    { roomId, serviceId: cfgSvc || SERVICE_ID, protocolVersion: '2' },
+    { roomId, protocolVersion: '2' },   // omit serviceId → SDK defaults from config
+    { roomId, serviceId: SERVICE_ID, protocolVersion: '2' },
+  ];
+  let access = null, lastErr = null;
+  for (const a of attempts) {
+    try {
+      dbg(`fetchAccess svc=${a.serviceId || '(default)'} room=${roomId}`);
+      const r = await window.Usion.game._fetchDirectAccess(a);
+      if (r && r.ws_url && r.access_token) { access = r; break; }
+      dbg(`incomplete ws=${!!(r && r.ws_url)} tok=${!!(r && r.access_token)}`);
+    } catch (e) {
+      lastErr = e;
+      dbg(`fetchAccess ERR: ${e && e.message || e}`);
+    }
   }
-  if (!access || !access.ws_url || !access.access_token) {
-    dbg(`bad access payload (mode=${mode}) ws_url=${access && !!access.ws_url} tok=${access && !!access.access_token}`);
-    console.error(`[FW] bad direct-access payload (connectionMode=${mode}) — is the service registered connection_mode:"direct"?`, access);
-    throw new Error('bad access payload');
-  }
+  if (!access) throw lastErr || new Error('bad access payload');
   dbg(`access OK host=${(() => { try { return new URL(access.ws_url).host; } catch { return '?'; } })()} tok=${access.access_token.length}b`);
   const sep = access.ws_url.indexOf('?') === -1 ? '?' : '&';
   return `${access.ws_url}${sep}token=${encodeURIComponent(access.access_token)}`;
