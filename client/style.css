@@ -32,13 +32,16 @@ html, body {
 #board { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
 
 /* ── Touch controls ─────────────────────────────────────── */
+/* Fixed to the real viewport (NOT inside #rot) so the buttons never rotate with
+   the game — they stay at the bottom corners in the phone's portrait orientation,
+   clear of GameTok's top-left ▲▼ swipe controls. */
 .pad {
-  position: absolute;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  display: flex; gap: 14px; z-index: 5;
+  position: fixed;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  display: flex; gap: 14px; z-index: 8;
 }
-.pad-left  { left: 14px; }
-.pad-right { right: 14px; }
+.pad-left  { left: max(16px, env(safe-area-inset-left)); }
+.pad-right { right: max(16px, env(safe-area-inset-right)); }
 .ctl {
   width: 64px; height: 64px; border-radius: 50%;
   border: 2px solid rgba(255,255,255,.22);

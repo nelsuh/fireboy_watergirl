@@ -13,16 +13,6 @@
 
   <div id="status"></div>
 
-  <!-- Touch controls (landscape): move on the left, jump on the right -->
-  <div class="pad pad-left">
-    <button class="ctl" id="btnLeft"  aria-label="left">◀</button>
-    <button class="ctl" id="btnRight" aria-label="right">▶</button>
-  </div>
-  <div class="pad pad-right">
-    <button class="ctl ctl-swap" id="btnSwap" aria-label="switch hero" hidden>⇄</button>
-    <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
-  </div>
-
   <!-- Start card removed — the game auto-starts on load. Kept hidden so the
        (few) `$('start').style.display='none'` calls stay harmless no-ops. -->
   <div id="start" class="overlay" hidden>
@@ -58,6 +48,18 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
+</div>
+
+<!-- Touch controls live OUTSIDE #rot so they stay in the phone's real (portrait)
+     orientation instead of rotating 90° with the game into GameTok's swipe
+     buttons. Move on the left, jump/switch on the right. -->
+<div class="pad pad-left">
+  <button class="ctl" id="btnLeft"  aria-label="left">◀</button>
+  <button class="ctl" id="btnRight" aria-label="right">▶</button>
+</div>
+<div class="pad pad-right">
+  <button class="ctl ctl-swap" id="btnSwap" aria-label="switch hero" hidden>⇄</button>
+  <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
 </div>
 
 <script src="https://usions.com/usion-sdk.js"></script>

@@ -56,6 +56,7 @@ function onReady() {
   $('againBtn')?.addEventListener('click', () => {
     $('endOverlay').hidden = true;
     if (net) net.sendJson({ t: 'restart' });
+    else if (soloActive) restartSolo();
   });
   // Start card removed — jump straight into the game as soon as identity is ready.
   if (started) return;
@@ -249,6 +250,40 @@ const fmt = (s) => { s = Math.floor(s || 0); return Math.floor(s / 60) + ':' + (
 // stand on plates). This makes a solo/GameTok session actually completable.
 // Promoted into a real 2-seat match by the host's Share button.
 let soloActive = false, soloRAF = 0, soloChar = 'f', swapBound = false;
+let soloWorld = null, soloMapTimes = [];
+
+// Advance the local solo run when both heroes clear the exit doors. Mirrors the
+// server's completion handling (server.js) — there's no server in solo, so the
+// caller of stepServer must act on `completed` or the map never changes.
+function soloStep(inputs) {
+  const world = soloWorld;
+  const { completed } = stepServer(world, inputs, DT);
+  if (!completed || world.ended) return;
+  const finished = world.level;
+  const secs = Math.max(0, Math.round(world.mapTime));
+  soloMapTimes[finished] = secs;
+  const prev = bestTimes[finished];
+  const isBest = prev == null || secs < prev;
+  if (isBest) { bestTimes[finished] = secs; saveBest(); }
+  const to = finished + 1;
+  if (to >= TOTAL_LEVELS) {
+    world.ended = true;
+    const total = soloMapTimes.reduce((a, b) => a + (b || 0), 0);
+    showVictory(total, soloMapTimes.slice());
+  } else {
+    toast(`Map ${finished + 1} cleared — ${fmt(secs)}${isBest ? '  ★ new best!' : ''}`);
+    loadLevel(world, to);
+  }
+}
+
+// Restart the solo run from Map 1 (wired to the victory card's "Play again").
+function restartSolo() {
+  if (!soloActive) return;
+  soloMapTimes = [];
+  soloChar = 'f';
+  soloWorld = makeWorld(0);
+}
+
 function bindSwap() {
   if (swapBound) return;
   const el = $('btnSwap'); if (!el) return;
@@ -267,10 +302,11 @@ function startSoloPractice() {
   if (soloActive || netStarted) return;
   soloActive = true;
   soloChar = 'f';
+  soloMapTimes = [];
   $('start').style.display = 'none';
   bindSwap();
   const swap = $('btnSwap'); if (swap) swap.hidden = false;
-  const world = makeWorld(0);
+  soloWorld = makeWorld(0);
   let last = performance.now(), acc = 0, intro = 1.4, pl = 0;
   function frame(now) {
     if (!soloActive) return;
@@ -280,7 +316,8 @@ function startSoloPractice() {
     acc += dt; if (acc > DT * 6) acc = DT;
     const drive = input.snapshot();
     const inputs = soloChar === 'f' ? { f: drive, w: {} } : { f: {}, w: drive };
-    while (acc >= DT) { acc -= DT; stepServer(world, inputs, DT); }
+    while (acc >= DT) { acc -= DT; soloStep(inputs); }
+    const world = soloWorld;
     if (world.level !== pl) { pl = world.level; intro = 1.4; }
     intro = Math.max(0, intro - dt);
     renderer.draw(world, dt, {

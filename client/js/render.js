@@ -271,31 +271,40 @@ export class Renderer {
 
   _hud(world, status) {
     const ctx = this.ctx;
-    ctx.fillStyle = 'rgba(10,12,20,0.55)'; ctx.fillRect(0, 0, WW, 26);
-    ctx.fillStyle = '#e8ecf5'; ctx.font = '600 13px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(`MAP ${world.level + 1}/${TOTAL_LEVELS} · ${world.name}`, 10, 17);
+    // The HUD is drawn in world units, then the whole world is scaled to fit the
+    // screen — so on a squeezed portrait/mobile view (small this.scale) the text
+    // renders tiny. Enlarge it inversely to the scale so it stays a readable
+    // physical size (k=1 on desktop, ~2.2 on a rotated phone).
+    const k = Math.max(1, 1 / (this.scale || 1));
+    const barH = Math.round(26 * k), yb = Math.round(17 * k);
+    ctx.fillStyle = 'rgba(10,12,20,0.55)'; ctx.fillRect(0, 0, WW, barH);
+    ctx.fillStyle = '#e8ecf5'; ctx.font = `600 ${Math.round(13 * k)}px sans-serif`; ctx.textAlign = 'left';
+    ctx.fillText(`MAP ${world.level + 1}/${TOTAL_LEVELS} · ${world.name}`, 10, yb);
     const got = world.gems.filter((g) => g.taken).length;
     ctx.textAlign = 'right';
-    ctx.fillText(`💎 ${got}   ☠ ${status.deaths}`, WW - 10, 17);
+    ctx.fillText(`💎 ${got}   ☠ ${status.deaths}`, WW - 10, yb);
 
     const best = status.best;
     const tStr = '⏱ ' + fmtTime(status.mapTime);
     const bStr = best != null ? '  best ' + fmtTime(best) : '';
-    ctx.textAlign = 'left'; ctx.font = '700 14px sans-serif';
+    const bigF = `700 ${Math.round(15 * k)}px sans-serif`;
+    const smF = `600 ${Math.round(12 * k)}px sans-serif`;
+    ctx.textAlign = 'left'; ctx.font = bigF;
     const tW = ctx.measureText(tStr).width;
-    ctx.font = '600 11px sans-serif';
+    ctx.font = smF;
     const bW = best != null ? ctx.measureText(bStr).width : 0;
     const startX = WW / 2 - (tW + bW) / 2;
-    ctx.font = '700 14px sans-serif';
+    ctx.font = bigF;
     ctx.fillStyle = (best != null && status.mapTime > best) ? '#ff9a8a' : '#ffe08a';
-    ctx.fillText(tStr, startX, 17);
-    if (best != null) { ctx.font = '600 11px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillText(bStr, startX + tW, 17); }
+    ctx.fillText(tStr, startX, yb);
+    if (best != null) { ctx.font = smF; ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillText(bStr, startX + tW, yb); }
 
     if (status.intro > 0) {
       ctx.globalAlpha = Math.min(1, status.intro / 0.4);
-      ctx.fillStyle = 'rgba(8,10,16,0.6)'; ctx.fillRect(0, WH / 2 - 44, WW, 88);
-      ctx.fillStyle = '#fff'; ctx.font = '700 30px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(`MAP ${world.level + 1} — ${world.name}`, WW / 2, WH / 2 + 10);
+      const bandH = Math.round(88 * k);
+      ctx.fillStyle = 'rgba(8,10,16,0.6)'; ctx.fillRect(0, WH / 2 - bandH / 2, WW, bandH);
+      ctx.fillStyle = '#fff'; ctx.font = `700 ${Math.round(30 * k)}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(`MAP ${world.level + 1} — ${world.name}`, WW / 2, WH / 2 + Math.round(10 * k));
       ctx.globalAlpha = 1;
     }
   }
