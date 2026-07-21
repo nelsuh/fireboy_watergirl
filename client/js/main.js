@@ -88,8 +88,22 @@ function connectAndPlay() {
 }
 
 async function platformUrl(roomId) {
-  const access = await window.Usion.game._fetchDirectAccess({ roomId, serviceId: SERVICE_ID, protocolVersion: '2' });
-  if (!access || !access.ws_url || !access.access_token) throw new Error('bad access payload');
+  // Direct-mode access requires the service to be registered with
+  // realtime.connection_mode === 'direct' (see scripts/register_direct.mjs). If
+  // it isn't, _fetchDirectAccess yields no usable token and every (re)connect
+  // fails — surface WHY in the console instead of looping on a silent spinner.
+  const mode = (window.Usion && window.Usion.config && window.Usion.config.connectionMode) || '?';
+  let access;
+  try {
+    access = await window.Usion.game._fetchDirectAccess({ roomId, serviceId: SERVICE_ID, protocolVersion: '2' });
+  } catch (e) {
+    console.error(`[FW] _fetchDirectAccess failed (connectionMode=${mode}, service=${SERVICE_ID}, room=${roomId}):`, e);
+    throw e;
+  }
+  if (!access || !access.ws_url || !access.access_token) {
+    console.error(`[FW] bad direct-access payload (connectionMode=${mode}) — is the service registered connection_mode:"direct"?`, access);
+    throw new Error('bad access payload');
+  }
   const sep = access.ws_url.indexOf('?') === -1 ? '?' : '&';
   return `${access.ws_url}${sep}token=${encodeURIComponent(access.access_token)}`;
 }
