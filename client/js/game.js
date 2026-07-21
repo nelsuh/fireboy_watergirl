@@ -11,7 +11,7 @@
 
 import {
   DT, INTERP_DELAY_MS, TOTAL_LEVELS, HF_GROUND, HF_FACE_R, HF_DEAD, HF_DOOR,
-  PH_RESET, PH_ENDED, BTN_LEFT, BTN_RIGHT, BTN_JUMP, T, CHAR_W,
+  PH_RESET, PH_ENDED, BTN_LEFT, BTN_RIGHT, BTN_JUMP, T, CHAR_W, CHAR_H,
 } from '../shared/protocol.js';
 import { makeWorld, loadLevel, stepHeroKinematics } from '../shared/sim.js';
 
@@ -35,6 +35,12 @@ export class Game {
 
     this.remotes = [];              // partner snapshot buffer [{tMs,x,y,vx,vy,flags}]
     this.lastServerLevel = 0;
+
+    // Gems of MY colour that I've predicted collecting locally, so the pickup
+    // (burst + count) shows instantly instead of waiting a round-trip for the
+    // server to confirm — that lag made the collect animation appear only AFTER
+    // landing. Cleared on level change / death-reset (gems respawn).
+    this.predictedGems = new Set();
 
     // world-status mirror (from snapshots)
     this.deaths = 0;
@@ -63,8 +69,24 @@ export class Game {
     const me = this.world.heroes[this.myKey];
     if (!me.dead && !this.ended && !(this.phase & PH_RESET)) {
       stepHeroKinematics(this.world, me, decodeButtons(buttons), DT);
+      this._predictGems(me);
     }
     this.net.sendInput(inp.seq, buttons);
+  }
+
+  // Optimistically collect MY-colour gems the predicted hero overlaps (same test
+  // as the server's heroGameplay). The pickup shows this frame; the server
+  // confirms it a round-trip later (idempotent). I own my colour, so it never
+  // disagrees. Fireboy = red ('r'), Watergirl = blue ('b').
+  _predictGems(me) {
+    const mineIsRed = this.myKey === 'f';
+    const cx = me.x + CHAR_W / 2, cy = me.y + CHAR_H / 2;
+    for (let i = 0; i < this.world.gems.length; i++) {
+      const g = this.world.gems[i];
+      if (g.taken || (g.kind === 'r') !== mineIsRed) continue;
+      const gx = g.x * T + T / 2, gy = g.y * T + T / 2;
+      if (Math.abs(gx - cx) < 22 && Math.abs(gy - cy) < 24) { g.taken = true; this.predictedGems.add(i); }
+    }
   }
 
   // ---------- snapshots ----------
@@ -78,15 +100,24 @@ export class Game {
       this.pending.length = 0;
       this.errX = 0; this.errY = 0;
       this._lastSnapTick = null;
+      this.predictedGems.clear();
     }
+    // A death (deaths went up) resets the level → gems respawn; drop stale
+    // predictions so they don't force-hide respawned gems.
+    if (snap.deaths > this.deaths) this.predictedGems.clear();
     this.level = snap.level;
     this.deaths = snap.deaths;
     this.mapTime = snap.mapTimeCs / 100;
     this.phase = snap.phase;
     this.ended = !!(snap.phase & PH_ENDED);
 
-    // authoritative world state
-    for (let i = 0; i < this.world.gems.length; i++) this.world.gems[i].taken = !!(snap.gemsTaken & (1 << i));
+    // authoritative world state — a locally-predicted own-colour gem stays taken
+    // until the server confirms it (else it would flicker back before the ack).
+    for (let i = 0; i < this.world.gems.length; i++) {
+      const srvTaken = !!(snap.gemsTaken & (1 << i));
+      this.world.gems[i].taken = srvTaken || this.predictedGems.has(i);
+      if (srvTaken) this.predictedGems.delete(i);
+    }
     this.world.leverOn = {};
     for (let ch = 1; ch <= 8; ch++) if (snap.leversOn & (1 << (ch - 1))) this.world.leverOn[ch] = true;
     for (let i = 0; i < this.world.gates.length && i < snap.gates.length; i++) this.world.gates[i].open = snap.gates[i];
@@ -182,6 +213,7 @@ export class Game {
         if (typeof msg.level === 'number' && msg.level !== this.world.level) loadLevel(this.world, msg.level);
         this.remotes.length = 0;
         this.pending.length = 0;
+        this.predictedGems.clear();
         this.ready = true;
         break;
       case 'join': this.names.set(msg.hero, msg.name); this.pendingEvents.push({ type: 'join', hero: msg.hero, name: msg.name }); break;
@@ -191,6 +223,7 @@ export class Game {
       case 'restart':
         loadLevel(this.world, 0);
         this.remotes.length = 0; this.pending.length = 0;
+        this.predictedGems.clear();
         this.deaths = 0; this.ended = false;
         this.pendingEvents.push({ type: 'restart' });
         break;
