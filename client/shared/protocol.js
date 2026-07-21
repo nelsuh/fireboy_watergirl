@@ -22,7 +22,7 @@ export const COYOTE = 0.08, JUMP_BUFFER = 0.12;
 
 export const TOTAL_LEVELS = 5;
 export const MAX_PLAYERS_PER_ROOM = 2;           // co-op: Fireboy + Watergirl
-export const INTERP_DELAY_MS = 66;               // remote hero rendered this far in the past
+export const INTERP_DELAY_MS = 100;              // remote hero rendered this far in the past (bigger buffer = smoother partner under real-network jitter)
 export const RESET_DELAY = 0.9;                  // seconds a death freeze lasts before respawn
 export const DOOR_HOLD = 0.45;                   // both-at-door dwell before advancing
 

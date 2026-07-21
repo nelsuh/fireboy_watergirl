@@ -67,16 +67,14 @@ export class Renderer {
     ctx.save();
     ctx.beginPath(); ctx.rect(0, 0, WW, WH); ctx.clip();
 
-    const cave = ctx.createLinearGradient(0, 0, 0, WH);
-    cave.addColorStop(0, '#1b2030'); cave.addColorStop(0.6, '#171c2a'); cave.addColorStop(1, '#131722');
-    ctx.fillStyle = cave; ctx.fillRect(0, 0, WW, WH);
-    for (let i = 0; i < 26; i++) {
-      const rx = hash2(i, 7) * WW, ry = hash2(i, 13) * WH, rr = 30 + hash2(i, 3) * 80;
-      ctx.fillStyle = 'rgba(255,255,255,0.018)';
-      ctx.beginPath(); ctx.arc(rx, ry, rr, 0, 7); ctx.fill();
-    }
+    // Static layer (cave gradient + noise + tiles) is pixel-identical every frame
+    // for a given level — render it to an offscreen canvas once and blit it,
+    // instead of re-running a 720-cell tile loop + gradients + 26 arcs on every
+    // frame. That per-frame rebuild was the mobile lag.
+    const key = world.level + ':' + world.name;
+    if (this._staticKey !== key) this._buildStatic(world);
+    ctx.drawImage(this._static, 0, 0, WW, WH);
 
-    this._tiles(world);
     this._doors(world);
     this._gates(world);
     this._lifts(world);
@@ -92,8 +90,27 @@ export class Renderer {
     ctx.restore();
   }
 
-  _tiles(world) {
-    const ctx = this.ctx;
+  // Build the static level layer (cave + noise + tiles) into an offscreen canvas
+  // in world pixels (WW×WH). Rebuilt only when the level changes.
+  _buildStatic(world) {
+    if (!this._static) {
+      this._static = document.createElement('canvas');
+      this._static.width = WW; this._static.height = WH;
+      this._staticCtx = this._static.getContext('2d');
+    }
+    const ctx = this._staticCtx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, WW, WH);
+
+    const cave = ctx.createLinearGradient(0, 0, 0, WH);
+    cave.addColorStop(0, '#1b2030'); cave.addColorStop(0.6, '#171c2a'); cave.addColorStop(1, '#131722');
+    ctx.fillStyle = cave; ctx.fillRect(0, 0, WW, WH);
+    for (let i = 0; i < 26; i++) {
+      const rx = hash2(i, 7) * WW, ry = hash2(i, 13) * WH, rr = 30 + hash2(i, 3) * 80;
+      ctx.fillStyle = 'rgba(255,255,255,0.018)';
+      ctx.beginPath(); ctx.arc(rx, ry, rr, 0, 7); ctx.fill();
+    }
+
     for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
       const c = world.grid[y][x];
       if (c === '#') {
@@ -108,6 +125,7 @@ export class Renderer {
         ctx.fillStyle = '#7a6448'; ctx.fillRect(px, py, T, 3);
       }
     }
+    this._staticKey = world.level + ':' + world.name;
   }
 
   _liquids(world) {

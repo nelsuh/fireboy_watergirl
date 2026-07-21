@@ -19,37 +19,6 @@ const input = new Input();
 const me = { userId: null, userName: '', embedded: false, roomId: null };
 let net = null, game = null, netStarted = false, started = false;
 
-// ── TEMP connection debug panel (top-right) — REMOVE once the bug is fixed ──
-// Rolling on-screen log of the connection handshake so it can be read on a phone
-// where the console isn't visible. Lives outside #rot so orientation/rotation
-// never hides it. Search "TEMP connection debug" to rip all of this out.
-const dbg = (() => {
-  let el = null, lines = [];
-  const mount = () => {
-    if (el || !document.body) return;
-    el = document.createElement('div');
-    el.id = 'connDbg';
-    el.style.cssText = 'position:fixed;top:4px;right:4px;z-index:2147483647;max-width:66vw;'
-      + 'font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8fffce;'
-      + 'background:rgba(0,0,0,.78);padding:5px 7px;border-radius:6px;pointer-events:none;'
-      + 'white-space:pre-wrap;word-break:break-all;max-height:74vh;overflow:hidden';
-    document.body.appendChild(el);
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
-  else mount();
-  return (msg) => {
-    try {
-      mount();
-      const d = new Date();
-      const t = `${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-      lines.push(`${t} ${msg}`);
-      if (lines.length > 18) lines = lines.slice(-18);
-      if (el) el.textContent = lines.join('\n');
-    } catch { /* never let debug break the game */ }
-    try { console.log('[FW]', msg); } catch { /* ignore */ }
-  };
-})();
-
 let bestTimes = {};
 try { bestTimes = JSON.parse(localStorage.getItem('fw:best') || '{}') || {}; } catch { bestTimes = {}; }
 const saveBest = () => { try { localStorage.setItem('fw:best', JSON.stringify(bestTimes)); } catch { /* ignore */ } };
@@ -88,12 +57,6 @@ function onReady() {
     $('endOverlay').hidden = true;
     if (net) net.sendJson({ t: 'restart' });
   });
-  // TEMP debug: what identity/mode did the host hand us?
-  const cfg = (window.Usion && window.Usion.config) || {};
-  dbg(`init embedded=${me.embedded} mode=${cfg.connectionMode || '?'}`);
-  dbg(`room=${me.roomId || '(none)'}`);
-  dbg(`svc cfg=${cfg.serviceId || '?'} const=${SERVICE_ID}`);
-  dbg(`players=${(cfg.playerIds || []).length} tok=${cfg.authToken ? 'y' : 'n'}`);
   // Start card removed — jump straight into the game as soon as identity is ready.
   if (started) return;
   started = true;
@@ -113,49 +76,29 @@ function toast(text, ms = 2400) {
 function connectAndPlay() {
   // Standalone/dev override: ?dev=1 forces a direct WS connect with a dev token
   // (server must run with DEV_ALLOW_UNSIGNED=1). Handy for local two-tab testing.
-  if (/[?&]dev=1/.test(location.search)) { dbg('branch: dev=1'); startNet(() => Promise.resolve(devUrl())); return; }
+  if (/[?&]dev=1/.test(location.search)) { startNet(() => Promise.resolve(devUrl())); return; }
   if (me.embedded && me.roomId) {
-    dbg('branch: platform direct');
     startNet(() => platformUrl(me.roomId));
   } else if (me.embedded && !me.roomId) {
-    dbg('branch: solo practice (no room)');
     startSoloPractice();
     toast('Practice mode — tap Share above to play with a friend', 3600);
   } else {
-    dbg('branch: standalone dev');
     startNet(() => Promise.resolve(devUrl()));
   }
 }
 
 async function platformUrl(roomId) {
-  // Direct-mode access requires the service to be registered with
-  // realtime.connection_mode === 'direct' (see scripts/register_direct.mjs). If
-  // it isn't, _fetchDirectAccess yields no usable token and every (re)connect
-  // fails — surface WHY in the console instead of looping on a silent spinner.
-  // The 400 on _fetchDirectAccess points at a bad request param, most likely a
-  // serviceId that doesn't match the room's real service. Try the authoritative
-  // config.serviceId first, then let the SDK default it, then the hardcoded
-  // constant — logging which shape the backend accepts. (TEMP diagnostic.)
-  const cfgSvc = (window.Usion && window.Usion.config && window.Usion.config.serviceId) || null;
-  const attempts = [
-    { roomId, serviceId: cfgSvc || SERVICE_ID, protocolVersion: '2' },
-    { roomId, protocolVersion: '2' },   // omit serviceId → SDK defaults from config
-    { roomId, serviceId: SERVICE_ID, protocolVersion: '2' },
-  ];
-  let access = null, lastErr = null;
-  for (const a of attempts) {
-    try {
-      dbg(`fetchAccess svc=${a.serviceId || '(default)'} room=${roomId}`);
-      const r = await window.Usion.game._fetchDirectAccess(a);
-      if (r && r.ws_url && r.access_token) { access = r; break; }
-      dbg(`incomplete ws=${!!(r && r.ws_url)} tok=${!!(r && r.access_token)}`);
-    } catch (e) {
-      lastErr = e;
-      dbg(`fetchAccess ERR: ${e && e.message || e}`);
-    }
+  // Use the AUTHORITATIVE service id from the host (config.serviceId) — the
+  // platform assigns an auto-generated hashed slug (e.g. fireboy-and-watergirl-
+  // dcb7ed3a), NOT the clean SERVICE_ID constant, and a mismatched serviceId
+  // makes _fetchDirectAccess 400. The server's SERVICE_ID must equal this too
+  // (see server/config.js) or the minted token's audience is rejected 4002.
+  const svc = (window.Usion && window.Usion.config && window.Usion.config.serviceId) || SERVICE_ID;
+  const access = await window.Usion.game._fetchDirectAccess({ roomId, serviceId: svc, protocolVersion: '2' });
+  if (!access || !access.ws_url || !access.access_token) {
+    console.error('[FW] bad direct-access payload — is the service registered connection_mode:"direct"?', access);
+    throw new Error('bad access payload');
   }
-  if (!access) throw lastErr || new Error('bad access payload');
-  dbg(`access OK host=${(() => { try { return new URL(access.ws_url).host; } catch { return '?'; } })()} tok=${access.access_token.length}b`);
   const sep = access.ws_url.indexOf('?') === -1 ? '?' : '&';
   return `${access.ws_url}${sep}token=${encodeURIComponent(access.access_token)}`;
 }
@@ -189,7 +132,6 @@ function startNet(resolveUrl) {
   game = new Game(null);
   net = new Net(resolveUrl, {
     name: me.userName || 'player',
-    onDebug: dbg,   // TEMP connection debug
     onSnapshot: (s) => game.onSnapshot(s),
     onEvent: (m) => game.onEvent(m),
     onStatus: (s) => {

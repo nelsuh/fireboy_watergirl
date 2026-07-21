@@ -1,6 +1,14 @@
 /* FIRE & WATER — landscape mobile co-op platformer (direct mode) */
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* {
+  margin: 0; padding: 0; box-sizing: border-box;
+  /* Kill the mobile long-press "Select / Copy / Look Up" callout and text
+     selection on every element (buttons, canvas, HUD) — this is a game, nothing
+     is meant to be selectable. */
+  -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
 [hidden] { display: none !important; }
 
 html, body {
