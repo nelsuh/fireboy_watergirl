@@ -161,11 +161,26 @@ function loadLevel(n, opts) {
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
     const c = M.grid[y][x];
     if (c === "r" || c === "b") L.gems.push({ x, y, kind: c, taken: false });
-    else if (c === "F" || c === "W" || c === "G") L.liquids.push({ x, y, kind: c });
     else if (c === "A") L.spawns.f = { x, y };
     else if (c === "B") L.spawns.w = { x, y };
     else if (c === "D") L.doors.f = { x, y };
     else if (c === "E") L.doors.w = { x, y };
+  }
+  // Liquid pools: merge consecutive same-kind tiles into one pool, then shave
+  // half a tile off wide (>=3) fire/water pools — centered — so they're easier
+  // to jump. Goo (G) lakes keep full tile width. px/pw are in pixels.
+  for (let y = 0; y < ROWS; y++) {
+    let x = 0;
+    while (x < COLS) {
+      const c = M.grid[y][x];
+      if (c === "F" || c === "W" || c === "G") {
+        let n = 1;
+        while (x + n < COLS && M.grid[y][x + n] === c) n++;
+        const eff = (c !== "G" && n >= 3) ? n - 0.5 : n;
+        L.liquids.push({ x, y, kind: c, px: (x + (n - eff) / 2) * T, pw: eff * T });
+        x += n;
+      } else x++;
+    }
   }
   if (!chars) chars = { f: mkHero("f"), w: mkHero("w") };
   respawnHeroes();
@@ -428,8 +443,8 @@ function stepHero(k, dt) {
   // liquids: feet dipping into a fatal pool
   const feetY = h.y + CHAR_H - 8;
   for (const q of L.liquids) {
-    const qx = q.x * T, qy = q.y * T + T * 0.5;
-    if (h.x + CHAR_W - 4 > qx && h.x + 4 < qx + T && h.y + CHAR_H > qy + 4 && feetY < qy + T) {
+    const qx = q.px, qy = q.y * T + T * 0.5;
+    if (h.x + CHAR_W - 4 > qx && h.x + 4 < qx + q.pw && h.y + CHAR_H > qy + 4 && feetY < qy + T) {
       const fatal = q.kind === "G" || (q.kind === "W" && k === "f") || (q.kind === "F" && k === "w");
       if (fatal) { killHero(k, q.kind); break; }
     }
@@ -689,7 +704,7 @@ function drawTiles() {
 
 function drawLiquids() {
   for (const q of L.liquids) {
-    const px = q.x * T, py = q.y * T + T * 0.5;
+    const px = q.px, pw = q.pw, py = q.y * T + T * 0.5;
     const col = q.kind === "F" ? ["#ff6a2a", "#c93a10"] : q.kind === "W" ? ["#48a7ff", "#1c62c9"] : ["#7ed941", "#3f9a1e"];
     const g = ctx.createLinearGradient(0, py, 0, py + T * 0.5);
     g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
@@ -697,13 +712,13 @@ function drawLiquids() {
     ctx.beginPath();
     ctx.moveTo(px, py + 4 + Math.sin(time * 4 + q.x * 1.7) * 2);
     for (let i = 1; i <= 4; i++) {
-      const wx = px + (T / 4) * i;
+      const wx = px + (pw / 4) * i;
       ctx.lineTo(wx, py + 4 + Math.sin(time * 4 + (q.x + i / 4) * 1.7) * 2);
     }
-    ctx.lineTo(px + T, py + T * 0.5); ctx.lineTo(px, py + T * 0.5);
+    ctx.lineTo(px + pw, py + T * 0.5); ctx.lineTo(px, py + T * 0.5);
     ctx.closePath(); ctx.fill();
     ctx.fillStyle = q.kind === "F" ? "rgba(255,140,60,0.15)" : q.kind === "W" ? "rgba(90,170,255,0.12)" : "rgba(130,220,70,0.12)";
-    ctx.fillRect(px, py - 10, T, 10);
+    ctx.fillRect(px, py - 10, pw, 10);
   }
 }
 
