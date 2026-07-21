@@ -8,12 +8,14 @@ import { MSG, DT, decodeSnapshot, decodePong, encodeInput, encodePing } from '..
 export class Net {
   // `resolveUrl` is an async () => wsUrl-with-token, called on every (re)connect
   // so a fresh access token is minted each time (platform tokens are short-lived).
-  constructor(resolveUrl, { name, onSnapshot, onEvent, onStatus }) {
+  constructor(resolveUrl, { name, onSnapshot, onEvent, onStatus, onDebug }) {
     this.resolveUrl = resolveUrl;
     this.name = name;
     this.onSnapshot = onSnapshot;
     this.onEvent = onEvent;
     this.onStatus = onStatus;
+    this.dbg = onDebug || (() => {});   // TEMP connection debug (remove with panel)
+    this._attempts = 0;
     this.ws = null;
     this.connected = false;
     this.rtt = 0;
@@ -26,11 +28,17 @@ export class Net {
   }
 
   connect() {
+    this._attempts++;
     this.onStatus(this._clockInit ? 'reconnecting' : 'connecting');
+    this.dbg(`connect #${this._attempts} — resolving url…`);
     Promise.resolve()
       .then(() => this.resolveUrl())
-      .then((url) => { if (!this.closedByUs) this._open(url); })
-      .catch(() => this._scheduleReconnect());
+      .then((url) => {
+        if (this.closedByUs) return;
+        try { this.dbg(`dial ${new URL(url).host}`); } catch { /* opaque url */ }
+        this._open(url);
+      })
+      .catch((e) => { this.dbg(`resolveUrl ERR: ${e && e.message || e}`); this._scheduleReconnect(); });
   }
 
   _open(url) {
@@ -41,6 +49,7 @@ export class Net {
     ws.onopen = () => {
       this.backoff = 500;
       this._clockInit = false;   // re-anchor the server-clock estimate on reconnect
+      this.dbg('ws OPEN → hello');
       ws.send(JSON.stringify({ t: 'hello', name: this.name }));
       this._pingTimer = setInterval(() => {
         if (ws.readyState === 1) ws.send(encodePing(performance.now()));
@@ -52,7 +61,10 @@ export class Net {
       if (typeof ev.data === 'string') {
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
-        if (msg.t === 'welcome') { this.connected = true; this.onStatus('connected'); }
+        if (msg.t === 'welcome') { this.connected = true; this.onStatus('connected'); this.dbg(`WELCOME hero=${msg.hero} players=${(msg.players||[]).length}`); }
+        else if (msg.t === 'error') this.dbg(`srv error: ${msg.reason || '?'}`);
+        else if (msg.t === 'join') this.dbg(`join hero=${msg.hero}`);
+        else if (msg.t === 'leave') this.dbg(`leave hero=${msg.hero}`);
         this.onEvent(msg);
         return;
       }
@@ -68,13 +80,14 @@ export class Net {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       this.connected = false;
       clearInterval(this._pingTimer);
+      this.dbg(`ws CLOSE ${ev && ev.code}${ev && ev.reason ? ' ' + ev.reason : ''}`);
       if (this.closedByUs) return;
       this._scheduleReconnect();
     };
-    ws.onerror = () => { /* onclose follows */ };
+    ws.onerror = () => { this.dbg('ws ERROR (close follows)'); };
   }
 
   _scheduleReconnect() {
