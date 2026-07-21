@@ -124,7 +124,7 @@ export class Game {
     if (nowDead) {
       me.x = server.x; me.y = server.y; me.vx = 0; me.vy = 0;
       me.dead = true; me.grounded = !!(server.flags & HF_GROUND);
-      this.pending.length = 0;
+      this.pending.length = 0; this._lastAckedBtns = 0;
       this.errX = 0; this.errY = 0;
       return;
     }
@@ -134,18 +134,34 @@ export class Game {
       me.dead = false; me.grounded = true; me.onLift = -1;
       me.coyote = 0; me.jumpBuf = 0; me.jumpHeld = false;
       me.face = (server.flags & HF_FACE_R) ? 1 : -1;
-      this.pending.length = 0;
+      this.pending.length = 0; this._lastAckedBtns = 0;
       this.errX = 0; this.errY = 0;
       return;
     }
 
-    // drop acked inputs, replay the rest from the authoritative kinematic state
-    while (this.pending.length && seqLte(this.pending[0].seq, ackSeq)) this.pending.shift();
+    // drop acked inputs, remembering the LAST acked button state. The jump is
+    // edge-triggered (`input.jump && !h.jumpHeld`): if we replay held-jump inputs
+    // with a stale `jumpHeld`, the rising edge is missed and the predicted hero
+    // fails to re-jump → it snaps back to the ground every frame (the takeoff
+    // hitch). Reconstructing jumpHeld from the last acked input makes the replay
+    // reproduce the jump exactly. (jumpBuf/coyote are left intact so buffered and
+    // coyote jumps still replay.)
+    let ackedBtns = this._lastAckedBtns || 0;
+    while (this.pending.length && seqLte(this.pending[0].seq, ackSeq)) ackedBtns = this.pending.shift().buttons;
+    this._lastAckedBtns = ackedBtns;
     const oldX = me.x, oldY = me.y;
     me.x = server.x; me.y = server.y; me.vx = server.vx; me.vy = server.vy;
     me.dead = false;
     me.grounded = !!(server.flags & HF_GROUND);
     me.face = (server.flags & HF_FACE_R) ? 1 : -1;
+    // Rebuild the edge/timer state from scratch so the replay is deterministic:
+    // jumpHeld from the last acked input; jumpBuf/coyote cleared (any pre-window
+    // jump is already reflected in server.vy/grounded, any in-window press
+    // re-derives them during replay). Leftover forward-prediction values here
+    // belong to a different tick and cause phantom snaps on rapid taps.
+    me.jumpHeld = !!(ackedBtns & BTN_JUMP);
+    me.jumpBuf = 0;
+    me.coyote = 0;
     for (const inp of this.pending) stepHeroKinematics(this.world, me, decodeButtons(inp.buttons), DT);
 
     // absorb the correction into a decaying visual offset (no visible snapping)
