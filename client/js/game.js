@@ -248,18 +248,18 @@ export class Game {
     this.errY *= 0.86;
     if (!this.ready) return;
 
-    // Advance each lift from its authoritative (snapshot) position to ~present by
-    // how STALE that snapshot is (serverNow − snapshotTime = one-way latency), so the
-    // DRAWN ferry keeps up with the predicted rider (my own hero runs at ~present;
-    // the partner is pinned onto this same drawn ferry below). Without it the ferry
-    // lags one trip behind and a rider stands off its leading edge, over the goo.
-    // Cosmetic dpx/dpy only — authoritative px/py still drive prediction & collision.
-    // Inert for a still lift (vx/vy == 0) and clamped to the lift's travel range.
+    // Advance each lift from its authoritative (snapshot) position to ~present by how
+    // STALE that snapshot is (serverNow − snapshotTime = one-way latency), so the DRAWN
+    // ferry keeps up with the predicted rider. Prediction carries riders HORIZONTALLY
+    // only (stepHeroKinematics uses f.vx), so advance the draw position on x only —
+    // advancing y would push a vertical lift ahead of the (non-vertically-predicted)
+    // rider and open a constant gap under their feet. Cosmetic dpx/dpy only; the
+    // authoritative px/py still drive prediction & collision. Inert for a still lift.
     const snapMs = (this._lastSnapTick != null) ? this._lastSnapTick * DT * 1000 : this.net.serverNowMs();
     const horizon = Math.max(0, Math.min(0.5, (this.net.serverNowMs() - snapMs) / 1000));
     for (const f of this.world.lifts) {
       f.dpx = clampRange(f.px + f.vx * horizon, f.x0, f.x1);
-      f.dpy = clampRange(f.py + f.vy * horizon, f.y0, f.y1);
+      f.dpy = f.py;
     }
 
     const renderMs = this.net.serverNowMs() - INTERP_DELAY_MS;
