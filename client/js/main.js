@@ -23,6 +23,20 @@ let bestTimes = {};
 try { bestTimes = JSON.parse(localStorage.getItem('fw:best') || '{}') || {}; } catch { bestTimes = {}; }
 const saveBest = () => { try { localStorage.setItem('fw:best', JSON.stringify(bestTimes)); } catch { /* ignore */ } };
 
+// Suppress the iOS double-tap / long-press selection magnifier (the "loupe") and
+// pinch/double-tap zoom. CSS (user-select/touch-callout/touch-action:none) covers
+// most of it, but Safari still fires the loupe on a fast double-tap unless the
+// gesture is preventDefault-ed at the touch layer. Buttons use pointerdown, which
+// fires before these, so gameplay taps are unaffected.
+document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+let _lastTapT = 0;
+document.addEventListener('touchend', (e) => {
+  const now = performance.now();
+  if (now - _lastTapT < 350) e.preventDefault();   // kill the double-tap zoom/loupe
+  _lastTapT = now;
+}, { passive: false });
+
 // ---------------------------------------------------------------- Usion boot --
 function boot() {
   const U = window.Usion;
