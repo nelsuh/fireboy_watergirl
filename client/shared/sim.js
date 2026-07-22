@@ -269,9 +269,13 @@ function updateChannels(world, dt) {
     for (const k of ['f', 'w']) {
       const h = world.heroes[k];
       if (h.onLift === i && !h.dead) {
-        h.x += mdx;
+        // Vertical carry only — pin the rider to the surface so they follow a lift
+        // up/down. The HORIZONTAL carry is applied once, in stepHeroKinematics (which
+        // also runs on the client for prediction); doing `h.x += mdx` here too moved a
+        // rider TWICE per server tick, sliding a "standing" passenger forward at 2×
+        // ferry speed — off the platform, over the goo (the reported glitch), and out
+        // of sync with the client's single-carry prediction.
         h.y = f.py - CHAR_H;
-        if (rectHitsSolid(world, h.x, h.y, CHAR_W, CHAR_H)) h.x -= mdx;
       }
     }
   }

@@ -221,9 +221,12 @@ export class Renderer {
     const ctx = this.ctx;
     for (const f of world.lifts) {
       const col = CH_COLORS[f.ch] || '#fff';
-      ctx.fillStyle = '#3a4157'; ctx.fillRect(f.px, f.py, f.w, 14);
-      ctx.fillStyle = col; ctx.fillRect(f.px, f.py, f.w, 4);
-      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(f.px, f.py + 10, f.w, 4);
+      // dpx/dpy = the ~present draw position (game.frame advances a moving ferry to
+      // match the predicted rider); falls back to px/py in solo / before first frame.
+      const px = f.dpx != null ? f.dpx : f.px, py = f.dpy != null ? f.dpy : f.py;
+      ctx.fillStyle = '#3a4157'; ctx.fillRect(px, py, f.w, 14);
+      ctx.fillStyle = col; ctx.fillRect(px, py, f.w, 4);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(px, py + 10, f.w, 4);
     }
   }
 

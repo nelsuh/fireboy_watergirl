@@ -133,11 +133,22 @@ export class Game {
     }
     this._lastSnapTick = snap.tick;
 
-    // partner hero → interpolation buffer
+    // partner hero → interpolation buffer. Also record which lift they're riding
+    // and their offset ALONG it, measured against THIS snapshot's lift positions
+    // (same tick → drift-free). frame() uses it to pin them onto the locally-drawn
+    // ferry instead of leaving them at a stale interpolated x that floats off the
+    // moving platform, over the goo below (the "running on poison" misread).
     const tMs = snap.tick * DT * 1000;
     const rp = snap.heroes[1 - this.myHero];
     if (rp) {
-      this.remotes.push({ tMs, ...rp });
+      let rideLift = -1, rideOff = 0;
+      for (let i = 0; i < snap.lifts.length && i < this.world.lifts.length; i++) {
+        const s = snap.lifts[i], lw = this.world.lifts[i].w;
+        if (rp.x + CHAR_W > s.px && rp.x < s.px + lw && Math.abs((rp.y + CHAR_H) - s.py) < 8) {
+          rideLift = i; rideOff = rp.x - s.px; break;
+        }
+      }
+      this.remotes.push({ tMs, ...rp, rideLift, rideOff });
       const cutoff = tMs - BUFFER_MS;
       while (this.remotes.length > 2 && this.remotes[0].tMs < cutoff) this.remotes.shift();
     }
@@ -236,6 +247,21 @@ export class Game {
     this.errX *= 0.86;
     this.errY *= 0.86;
     if (!this.ready) return;
+
+    // Advance each lift from its authoritative (snapshot) position to ~present by
+    // how STALE that snapshot is (serverNow − snapshotTime = one-way latency), so the
+    // DRAWN ferry keeps up with the predicted rider (my own hero runs at ~present;
+    // the partner is pinned onto this same drawn ferry below). Without it the ferry
+    // lags one trip behind and a rider stands off its leading edge, over the goo.
+    // Cosmetic dpx/dpy only — authoritative px/py still drive prediction & collision.
+    // Inert for a still lift (vx/vy == 0) and clamped to the lift's travel range.
+    const snapMs = (this._lastSnapTick != null) ? this._lastSnapTick * DT * 1000 : this.net.serverNowMs();
+    const horizon = Math.max(0, Math.min(0.5, (this.net.serverNowMs() - snapMs) / 1000));
+    for (const f of this.world.lifts) {
+      f.dpx = clampRange(f.px + f.vx * horizon, f.x0, f.x1);
+      f.dpy = clampRange(f.py + f.vy * horizon, f.y0, f.y1);
+    }
+
     const renderMs = this.net.serverNowMs() - INTERP_DELAY_MS;
     const partner = this.world.heroes[this.remoteKey];
     const st = this._sampleRemote(renderMs);
@@ -244,6 +270,14 @@ export class Game {
       partner.face = (st.flags & HF_FACE_R) ? 1 : -1;
       partner.dead = !!(st.flags & HF_DEAD);
       partner.grounded = !!(st.flags & HF_GROUND);
+      // Riding a lift → glue the partner to the drawn ferry surface using the
+      // drift-free offset captured at snapshot time, so they never detach from the
+      // moving platform. No-op for a still lift (dpx==px, offset reconstructs x).
+      if (st.rideLift >= 0 && this.world.lifts[st.rideLift] && !partner.dead) {
+        const f = this.world.lifts[st.rideLift];
+        partner.x = f.dpx + st.rideOff;
+        partner.y = f.dpy - CHAR_H;
+      }
     }
   }
 
@@ -272,5 +306,6 @@ export class Game {
 }
 
 const lerp = (a, b, f) => a + (b - a) * f;
+const clampRange = (v, a, b) => { const lo = a < b ? a : b, hi = a < b ? b : a; return v < lo ? lo : v > hi ? hi : v; };
 const seqLte = (a, b) => ((b - a + 65536) % 65536) < 32768;
 function decodeButtons(b) { return { left: !!(b & BTN_LEFT), right: !!(b & BTN_RIGHT), jump: !!(b & BTN_JUMP) }; }
