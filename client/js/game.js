@@ -166,6 +166,7 @@ export class Game {
     if (nowDead) {
       me.x = server.x; me.y = server.y; me.vx = 0; me.vy = 0;
       me.dead = true; me.grounded = !!(server.flags & HF_GROUND);
+      me.onLift = -1;
       this.pending.length = 0; this._lastAckedBtns = 0;
       this.errX = 0; this.errY = 0;
       return;
@@ -196,6 +197,11 @@ export class Game {
     me.dead = false;
     me.grounded = !!(server.flags & HF_GROUND);
     me.face = (server.flags & HF_FACE_R) ? 1 : -1;
+    // `onLift` is simulation state, but it is not carried by the compact hero
+    // snapshot flags. Rebuild it from the same-tick hero/lift geometry before
+    // replaying pending input. Keeping a stale -1 here makes prediction miss the
+    // ferry carry for a frame after every reconciliation.
+    me.onLift = me.grounded ? this._supportingLift(me) : -1;
     // Rebuild the edge/timer state from scratch so the replay is deterministic:
     // jumpHeld from the last acked input; jumpBuf/coyote cleared (any pre-window
     // jump is already reflected in server.vy/grounded, any in-window press
@@ -296,9 +302,35 @@ export class Game {
     return { ...b, x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f) };
   }
 
+  // Return the lift directly under a hero in the authoritative/prediction world.
+  // The small tolerance covers snapshot quantization without treating a nearby
+  // airborne hero as a rider.
+  _supportingLift(h) {
+    if (!h || h.dead) return -1;
+    const feet = h.y + CHAR_H;
+    for (let i = 0; i < this.world.lifts.length; i++) {
+      const f = this.world.lifts[i];
+      if (h.x + CHAR_W > f.px && h.x < f.px + f.w && Math.abs(feet - f.py) < 8) return i;
+    }
+    return -1;
+  }
+
   // my hero's render position (predicted + decaying correction offset)
   myRenderPos() {
     const me = this.world.heroes[this.myKey];
+    // Prefer prediction's explicit support flag. On a horizontal ferry the hero
+    // is predicted toward the present while f.px is still the latest snapshot,
+    // so a geometry-only lookup can briefly see the rider beyond the stale edge.
+    const liftIndex = me.grounded && me.onLift >= 0 && me.onLift < this.world.lifts.length
+      ? me.onLift : this._supportingLift(me);
+    if (liftIndex >= 0 && me.grounded) {
+      const f = this.world.lifts[liftIndex];
+      // Reconciliation smoothing must not move a rider independently from their
+      // platform. That made horizontal riders appear over the poison and vertical
+      // riders sink below/float beside the lift. While supported, render the exact
+      // predicted x and pin the feet to the same surface the renderer draws.
+      return { x: me.x, y: (f.dpy != null ? f.dpy : f.py) - CHAR_H };
+    }
     return { x: me.x + this.errX, y: me.y + this.errY };
   }
 

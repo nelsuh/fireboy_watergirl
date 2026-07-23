@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "node server/server.js",
-    "test": "node server/smoke.js"
+    "test": "node client/test/platform-rider.test.mjs && node server/smoke.js"
   },
   "engines": {
     "node": ">=20"
