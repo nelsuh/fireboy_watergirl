@@ -9,6 +9,7 @@ import { Input } from './input.js';
 import { Game } from './game.js';
 import { Renderer } from './render.js';
 import { makeWorld, stepServer, loadLevel } from '../shared/sim.js';
+import { t, detectLang, applyLang } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 const rot = $('rot');
@@ -39,11 +40,13 @@ document.addEventListener('touchend', (e) => {
 
 // ---------------------------------------------------------------- Usion boot --
 function boot() {
+  applyLang(detectLang());   // best-effort locale before the host is known
   const U = window.Usion;
   if (U && typeof U.init === 'function') {
     let done = false;
     const ready = (config) => {
       if (done) return; done = true;
+      applyLang(detectLang(config && config.language)); // platform locale
       try {
         me.userId = (U.user && U.user.getId && U.user.getId()) || (config && config.userId) || null;
         me.userName = (U.user && U.user.getName && U.user.getName()) || (config && config.userName) || '';
@@ -65,7 +68,7 @@ function boot() {
 
 function onReady() {
   const who = $('whoami');
-  if (who) who.textContent = me.userName ? `Playing as ${me.userName}` : (me.embedded ? '' : 'Guest');
+  if (who) who.textContent = me.userName ? t('playingAs', me.userName) : (me.embedded ? '' : t('guest'));
   // "Play again" on the victory card still needs wiring.
   $('againBtn')?.addEventListener('click', () => {
     $('endOverlay').hidden = true;
@@ -166,7 +169,7 @@ function startNet(resolveUrl) {
 
   game = new Game(null);
   net = new Net(resolveUrl, {
-    name: me.userName || 'player',
+    name: me.userName || t('defaultName'),
     onSnapshot: (s) => game.onSnapshot(s),
     onEvent: (m) => game.onEvent(m),
     onStatus: (s) => {
@@ -206,7 +209,7 @@ function startNet(resolveUrl) {
   }
   requestAnimationFrame(loop);
 
-  setInterval(() => { const el = $('pingv'); if (el && net) el.textContent = `${net.rtt} ms`; }, 500);
+  setInterval(() => { const el = $('pingv'); if (el && net) el.textContent = `${net.rtt} ${t('ms')}`; }, 500);
 }
 
 function handleEvents() {
@@ -247,11 +250,11 @@ function showVictory(total, per) {
   per2.forEach((secs, i) => { if (secs != null && (bestTimes[i] == null || secs < bestTimes[i])) bestTimes[i] = secs; });
   saveBest();
   $('endEmoji').textContent = '🏆';
-  $('endTitle').textContent = 'All 5 maps cleared!';
+  $('endTitle').textContent = t('allMapsCleared', per2.length || 5);
   const perMap = per2.map((s, i) => `${i + 1}: ${fmt(s || 0)}`).join('   ');
   $('endStats').innerHTML =
-    `☠ ${game.deaths} falls · ⏱ <b>${fmt(total)}</b>` +
-    (isBestTotal ? ' <span style="color:#ffd76e">★ new best!</span>' : (prevTotal != null ? ` <span style="opacity:.6">(best ${fmt(prevTotal)})</span>` : '')) +
+    `☠ ${game.deaths} ${t('fallsLabel')} · ⏱ <b>${fmt(total)}</b>` +
+    (isBestTotal ? ` <span style="color:#ffd76e">${t('newBest')}</span>` : (prevTotal != null ? ` <span style="opacity:.6">${t('bestWas', fmt(prevTotal))}</span>` : '')) +
     `<br><span style="opacity:.72;font-size:13px">${perMap}</span>`;
   $('endOverlay').hidden = false;
 }

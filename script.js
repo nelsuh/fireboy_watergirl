@@ -32,6 +32,92 @@ const DT = 1 / 60;
 const CH_COLORS = { 1: "#ffd34d", 2: "#b98bff", 3: "#59e0d8", 4: "#ff7ab8" };
 const TOTAL_LEVELS = MAPS.length;
 
+// ── i18n ─────────────────────────────────────────────────
+// Every user-facing string lives here, chosen from the platform language
+// (Usion.getLanguage() / config.language) — never hardcode UI text to one
+// locale. Values may be a string or a function of runtime args. Keep both
+// locales in sync.
+const STR = {
+  en: {
+    appName: "Fire & Water",
+    // controls
+    ctlLeft: "left", ctlRight: "right", ctlSwap: "swap", ctlJump: "jump",
+    // overlays
+    waitingForPartner: "Waiting for your partner…",
+    playSolo: "Play solo instead",
+    reconnecting: "Reconnecting…",
+    youDidIt: "You did it!",
+    playAgain: "Play again",
+    // identity
+    you: "You",
+    partner: "Partner",
+    // victory
+    allMapsCleared: (n) => "All " + n + " maps cleared!",
+    fallsLabel: "falls",
+    newBest: "★ new best!",
+    bestWas: (time) => "(best " + time + ")",
+    // toasts
+    lostConnection: "Lost connection — you control both heroes (⇄)",
+    partnerLeft: "Partner left — you control both heroes (⇄)",
+    roomCreated: "Room created — waiting for your partner…",
+  },
+  mn: {
+    appName: "Гал ба Ус",
+    ctlLeft: "зүүн", ctlRight: "баруун", ctlSwap: "солих", ctlJump: "үсрэх",
+    waitingForPartner: "Хамтрагчаа хүлээж байна…",
+    playSolo: "Оронд нь ганцаараа тоглох",
+    reconnecting: "Дахин холбогдож байна…",
+    youDidIt: "Та чадлаа!",
+    playAgain: "Дахин тоглох",
+    you: "Та",
+    partner: "Хамтрагч",
+    allMapsCleared: (n) => "Бүх " + n + " газрын зураг дууслаа!",
+    fallsLabel: "унасан",
+    newBest: "★ шинэ дээд амжилт!",
+    bestWas: (time) => "(дээд " + time + ")",
+    lostConnection: "Холболт тасарлаа — та хоёулангийнх нь удирдана (⇄)",
+    partnerLeft: "Хамтрагч гарлаа — та хоёулангийнх нь удирдана (⇄)",
+    roomCreated: "Өрөө үүслээ — хамтрагчаа хүлээж байна…",
+  },
+};
+let LANG = "en";
+function t(key) {
+  let v = STR[LANG] ? STR[LANG][key] : undefined;
+  if (v === undefined) v = STR.en[key];
+  if (typeof v === "function") return v.apply(null, Array.prototype.slice.call(arguments, 1));
+  return v !== undefined ? v : key;
+}
+// Platform language first (config.language, then Usion.getLanguage()); the
+// browser hint is only a fallback before the host has booted.
+function detectLang(cfgLang) {
+  let src = cfgLang;
+  if (!src) {
+    try { src = window.Usion && window.Usion.getLanguage && window.Usion.getLanguage(); } catch (_) {}
+  }
+  if (!src) src = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
+  return String(src).toLowerCase().indexOf("mn") === 0 ? "mn" : "en";
+}
+// Set the active locale and fill every static (index.html) string. Safe to call
+// again once the platform language arrives after the first paint.
+function applyLang(lang) {
+  LANG = lang === "mn" ? "mn" : "en";
+  try { document.documentElement.lang = LANG; } catch (_) {}
+  try { document.title = t("appName"); } catch (_) {}
+  const byId = (id, key) => { const el = document.getElementById(id); if (el) el.textContent = t(key); };
+  const ariaId = (id, key) => { const el = document.getElementById(id); if (el) el.setAttribute("aria-label", t(key)); };
+  ariaId("btnLeft", "ctlLeft");
+  ariaId("btnRight", "ctlRight");
+  ariaId("btnSwap", "ctlSwap");
+  ariaId("btnJump", "ctlJump");
+  byId("waitingText", "waitingForPartner");
+  byId("soloBtn", "playSolo");
+  byId("pauseText", "reconnecting");
+  byId("againBtn", "playAgain");
+  // The end title is the victory line once the run is finished.
+  const et = document.getElementById("endTitle");
+  if (et) et.textContent = (typeof ended !== "undefined" && ended) ? t("allMapsCleared", TOTAL_LEVELS) : t("youDidIt");
+}
+
 // ── DOM ───────────────────────────────────────────────────
 const rot = document.getElementById("rot");
 const canvas = document.getElementById("board");
@@ -78,7 +164,7 @@ let myId = null;
 let players = [];           // canonical roster (config.playerIds order)
 let myChar = "f", remoteChar = "w";
 let partnerHere = false;
-let partnerName = "Partner";
+let partnerName = "";
 let playerNames = {};
 let remote = { x: 0, y: 0, vx: 0, vy: 0, face: 1, g: 1, d: 0, dead: 0, lvl: -1, fresh: false };
 let netPaused = false;
@@ -524,11 +610,11 @@ function showVictory() {
   const isBestTotal = prevTotal == null || totalSecs < prevTotal;
   if (isBestTotal) { bestTimes.total = totalSecs; saveBestTimes(); }
   endEmoji.textContent = "🏆";
-  endTitle.textContent = "All 5 maps cleared!";
+  endTitle.textContent = t("allMapsCleared", TOTAL_LEVELS);
   const perMap = MAPS.map((m, i) => `${i + 1}: ${fmtTime(mapTimes[i] || 0)}`).join("   ");
   endStats.innerHTML =
-    `💎 ${gemsGot}/${TOTAL_GEMS} · ☠ ${deaths} falls · ⏱ <b>${fmtTime(totalSecs)}</b>` +
-    (isBestTotal ? ' <span style="color:#ffd76e">★ new best!</span>' : (prevTotal != null ? ` <span style="opacity:.6">(best ${fmtTime(prevTotal)})</span>` : "")) +
+    `💎 ${gemsGot}/${TOTAL_GEMS} · ☠ ${deaths} ${t("fallsLabel")} · ⏱ <b>${fmtTime(totalSecs)}</b>` +
+    (isBestTotal ? ` <span style="color:#ffd76e">${t("newBest")}</span>` : (prevTotal != null ? ` <span style="opacity:.6">${t("bestWas", fmtTime(prevTotal))}</span>` : "")) +
     `<br><span style="opacity:.72;font-size:13px">${perMap}</span>`;
   endOverlay.hidden = false;
   if (isMultiplayer) hostCheckpoint(TOTAL_LEVELS);
@@ -1150,7 +1236,7 @@ function showReconnecting() {
   if (!isMultiplayer || !partnerHere) return;
   if (!netPaused) pausedSince = Date.now();
   netPaused = true;
-  pauseText.textContent = "Reconnecting…";
+  pauseText.textContent = t("reconnecting");
   pauseOverlay.hidden = false;
 }
 
@@ -1221,7 +1307,7 @@ setInterval(() => {
     soloControlBoth = true;
     btnSwap.hidden = false;
     activeChar = myChar;
-    showToast("Lost connection — you control both heroes (⇄)");
+    showToast(t("lostConnection"));
   }
 }, 1200);
 
@@ -1313,7 +1399,7 @@ function registerGameHandlers() {
     soloControlBoth = true;
     btnSwap.hidden = false;
     activeChar = myChar;
-    showToast("Partner left — you control both heroes (⇄)");
+    showToast(t("partnerLeft"));
   });
 
   Usion.game.onJoined((d) => {
@@ -1355,7 +1441,7 @@ function registerGameHandlers() {
     isMultiplayer = true;
     myChar = "f"; remoteChar = "w";
     activeChar = "f";
-    showToast("Room created — waiting for your partner…");
+    showToast(t("roomCreated"));
   });
 
   Usion.game.onGameRestarted(() => restartAll(false));
@@ -1381,8 +1467,9 @@ let initFired = false, bootedStandalone = false;
 Usion.init(async function (config) {
   initFired = true;
   if (bootedStandalone) return;
+  applyLang(detectLang(config.language)); // platform locale — before any UI is built
   myId = config.userId;
-  playerNames[myId] = config.userName || "You";
+  playerNames[myId] = config.userName || t("you");
   if (config.playerIds && config.playerIds.length) players = config.playerIds.slice();
   registerGameHandlers();
   resize();
@@ -1419,6 +1506,7 @@ setTimeout(() => {
   startGame();
 }, 1200);
 
+applyLang(detectLang());   // best-effort locale before the host is known
 loadBestTimes();
 resize();
 requestAnimationFrame(frame);
