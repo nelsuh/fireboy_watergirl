@@ -64,7 +64,7 @@ export class Renderer {
     const { ctx, dpr, scale, ox, oy, cw, chh } = this;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const bg = ctx.createLinearGradient(0, 0, 0, chh);
-    bg.addColorStop(0, '#11141f'); bg.addColorStop(1, '#0a0c13');
+    bg.addColorStop(0, '#101a29'); bg.addColorStop(0.58, '#0b121d'); bg.addColorStop(1, '#070b12');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, cw, chh);
 
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
@@ -107,11 +107,26 @@ export class Renderer {
     ctx.clearRect(0, 0, WW, WH);
 
     const cave = ctx.createLinearGradient(0, 0, 0, WH);
-    cave.addColorStop(0, '#1b2030'); cave.addColorStop(0.6, '#171c2a'); cave.addColorStop(1, '#131722');
+    cave.addColorStop(0, '#202c3d'); cave.addColorStop(0.58, '#182332'); cave.addColorStop(1, '#111925');
     ctx.fillStyle = cave; ctx.fillRect(0, 0, WW, WH);
-    for (let i = 0; i < 26; i++) {
+
+    // Quiet carved arches make the cave read as an old elemental temple without
+    // competing with the route or adding per-frame rendering work.
+    ctx.strokeStyle = 'rgba(145,174,211,0.035)';
+    ctx.lineWidth = 9;
+    for (let i = 0; i < 5; i++) {
+      const ax = 74 + i * 146;
+      ctx.beginPath();
+      ctx.moveTo(ax - 54, WH);
+      ctx.lineTo(ax - 54, 126);
+      ctx.arc(ax, 126, 54, Math.PI, 0);
+      ctx.lineTo(ax + 54, WH);
+      ctx.stroke();
+    }
+
+    for (let i = 0; i < 22; i++) {
       const rx = hash2(i, 7) * WW, ry = hash2(i, 13) * WH, rr = 30 + hash2(i, 3) * 80;
-      ctx.fillStyle = 'rgba(255,255,255,0.018)';
+      ctx.fillStyle = 'rgba(201,221,244,0.014)';
       ctx.beginPath(); ctx.arc(rx, ry, rr, 0, 7); ctx.fill();
     }
 
@@ -119,14 +134,15 @@ export class Renderer {
       const c = world.grid[y][x];
       if (c === '#') {
         const shade = 0.9 + hash2(x, y) * 0.2, px = x * T, py = y * T;
-        ctx.fillStyle = `rgb(${(42 * shade) | 0},${(47 * shade) | 0},${(62 * shade) | 0})`;
+        ctx.fillStyle = `rgb(${(39 * shade) | 0},${(48 * shade) | 0},${(63 * shade) | 0})`;
         ctx.fillRect(px, py, T, T);
-        if ((y === 0 ? '#' : world.grid[y - 1][x]) !== '#') { ctx.fillStyle = 'rgba(130,150,190,0.5)'; ctx.fillRect(px, py, T, 3); }
-        ctx.fillStyle = 'rgba(0,0,0,0.14)'; ctx.fillRect(px + T - 3, py + 3, 3, T - 3);
+        if ((y === 0 ? '#' : world.grid[y - 1][x]) !== '#') { ctx.fillStyle = 'rgba(139,167,202,0.46)'; ctx.fillRect(px, py, T, 3); }
+        ctx.fillStyle = 'rgba(3,8,14,0.17)'; ctx.fillRect(px + T - 3, py + 3, 3, T - 3);
+        ctx.fillStyle = 'rgba(218,232,248,0.025)'; ctx.fillRect(px + 2, py + 3, 1, T - 6);
       } else if (c === '=') {
         const px = x * T, py = y * T;
-        ctx.fillStyle = '#5b4a35'; ctx.fillRect(px, py, T, 8);
-        ctx.fillStyle = '#7a6448'; ctx.fillRect(px, py, T, 3);
+        ctx.fillStyle = '#554938'; ctx.fillRect(px, py, T, 8);
+        ctx.fillStyle = '#887052'; ctx.fillRect(px, py, T, 3);
       }
     }
     this._staticKey = world.level + ':' + world.name;
@@ -144,6 +160,12 @@ export class Renderer {
       ctx.moveTo(px, py + 4 + Math.sin(this.time * 4 + q.x * 1.7) * 2);
       for (let i = 1; i <= 4; i++) { const wx = px + (pw / 4) * i; ctx.lineTo(wx, py + 4 + Math.sin(this.time * 4 + (q.x + i / 4) * 1.7) * 2); }
       ctx.lineTo(px + pw, py + T * 0.5); ctx.lineTo(px, py + T * 0.5); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = q.kind === 'F' ? 'rgba(255,191,105,0.72)' : q.kind === 'W' ? 'rgba(156,218,255,0.7)' : 'rgba(191,242,133,0.62)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px, py + 4 + Math.sin(this.time * 4 + q.x * 1.7) * 2);
+      for (let i = 1; i <= 4; i++) { const wx = px + (pw / 4) * i; ctx.lineTo(wx, py + 4 + Math.sin(this.time * 4 + (q.x + i / 4) * 1.7) * 2); }
+      ctx.stroke();
       ctx.fillStyle = q.kind === 'F' ? 'rgba(255,140,60,0.15)' : q.kind === 'W' ? 'rgba(90,170,255,0.12)' : 'rgba(130,220,70,0.12)';
       ctx.fillRect(px, py - 10, pw, 10);
     }
@@ -155,6 +177,8 @@ export class Renderer {
       if (g.taken) continue;
       const x = g.x * T + T / 2, y = g.y * T + T / 2 + Math.sin(this.time * 3 + g.x) * 3, r = 7;
       ctx.save(); ctx.translate(x, y); ctx.rotate(Math.sin(this.time * 2 + g.y) * 0.2);
+      ctx.fillStyle = g.kind === 'r' ? 'rgba(255,105,64,0.14)' : 'rgba(75,165,255,0.14)';
+      ctx.beginPath(); ctx.arc(0, 0, 11, 0, 7); ctx.fill();
       ctx.fillStyle = g.kind === 'r' ? '#ff5f3c' : '#3e9bff';
       ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * 0.8, 0); ctx.lineTo(0, r); ctx.lineTo(-r * 0.8, 0); ctx.closePath(); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
@@ -236,6 +260,8 @@ export class Renderer {
     const x = renderPos ? renderPos.x : h.x, y = renderPos ? renderPos.y : h.y;
     ctx.save();
     ctx.globalAlpha = h.dead ? Math.max(0, 1 - (h.deadT || 0) * 3) : dim ? 0.55 : 1;
+    ctx.fillStyle = 'rgba(2,6,12,0.28)';
+    ctx.beginPath(); ctx.ellipse(x + CHAR_W / 2, y + CHAR_H + 1, CHAR_W * 0.45, 3.5, 0, 0, 7); ctx.fill();
     const grad = ctx.createLinearGradient(x, y, x, y + CHAR_H);
     if (fire) { grad.addColorStop(0, '#ffb35c'); grad.addColorStop(1, '#ff5a2a'); }
     else { grad.addColorStop(0, '#8fd0ff'); grad.addColorStop(1, '#2f7fe0'); }
@@ -248,6 +274,8 @@ export class Renderer {
     ctx.arcTo(x, y + CHAR_H, x, y + 6, 6);
     ctx.arcTo(x, y + 6, x + CHAR_W, y + 6, r);
     ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = fire ? 'rgba(255,211,139,0.68)' : 'rgba(190,229,255,0.68)';
+    ctx.lineWidth = 1.2; ctx.stroke();
     const cx = x + CHAR_W / 2;
     if (fire) {
       const fl = Math.sin(this.time * 12 + x) * 2;
@@ -283,9 +311,14 @@ export class Renderer {
     // renders tiny. Enlarge it inversely to the scale so it stays a readable
     // physical size (k=1 on desktop, ~2.2 on a rotated phone).
     const k = Math.max(1, 1 / (this.scale || 1));
-    const barH = Math.round(26 * k), yb = Math.round(17 * k);
-    ctx.fillStyle = 'rgba(10,12,20,0.55)'; ctx.fillRect(0, 0, WW, barH);
-    ctx.fillStyle = '#e8ecf5'; ctx.font = `600 ${Math.round(13 * k)}px sans-serif`; ctx.textAlign = 'left';
+    const barH = Math.round(27 * k), yb = Math.round(18 * k);
+    const hud = ctx.createLinearGradient(0, 0, 0, barH);
+    hud.addColorStop(0, 'rgba(8,13,22,0.82)'); hud.addColorStop(1, 'rgba(8,13,22,0.56)');
+    ctx.fillStyle = hud; ctx.fillRect(0, 0, WW, barH);
+    const split = ctx.createLinearGradient(0, 0, WW, 0);
+    split.addColorStop(0, 'rgba(255,105,61,0.72)'); split.addColorStop(0.47, 'rgba(255,177,95,0.32)'); split.addColorStop(0.53, 'rgba(105,193,255,0.32)'); split.addColorStop(1, 'rgba(74,166,236,0.72)');
+    ctx.fillStyle = split; ctx.fillRect(0, barH - Math.max(1, Math.round(k)), WW, Math.max(1, Math.round(k)));
+    ctx.fillStyle = '#e8eff8'; ctx.font = `700 ${Math.round(13 * k)}px "Trebuchet MS", sans-serif`; ctx.textAlign = 'left';
     ctx.fillText(`MAP ${world.level + 1}/${TOTAL_LEVELS} · ${world.name}`, 10, yb);
     const got = world.gems.filter((g) => g.taken).length;
     ctx.textAlign = 'right';
@@ -294,8 +327,8 @@ export class Renderer {
     const best = status.best;
     const tStr = '⏱ ' + fmtTime(status.mapTime);
     const bStr = best != null ? '  best ' + fmtTime(best) : '';
-    const bigF = `700 ${Math.round(15 * k)}px sans-serif`;
-    const smF = `600 ${Math.round(12 * k)}px sans-serif`;
+    const bigF = `700 ${Math.round(15 * k)}px "Trebuchet MS", sans-serif`;
+    const smF = `600 ${Math.round(12 * k)}px "Trebuchet MS", sans-serif`;
     ctx.textAlign = 'left'; ctx.font = bigF;
     const tW = ctx.measureText(tStr).width;
     ctx.font = smF;
@@ -309,8 +342,8 @@ export class Renderer {
     if (status.intro > 0) {
       ctx.globalAlpha = Math.min(1, status.intro / 0.4);
       const bandH = Math.round(88 * k);
-      ctx.fillStyle = 'rgba(8,10,16,0.6)'; ctx.fillRect(0, WH / 2 - bandH / 2, WW, bandH);
-      ctx.fillStyle = '#fff'; ctx.font = `700 ${Math.round(30 * k)}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(7,12,20,0.66)'; ctx.fillRect(0, WH / 2 - bandH / 2, WW, bandH);
+      ctx.fillStyle = '#f4f7fc'; ctx.font = `700 ${Math.round(28 * k)}px "Trebuchet MS", sans-serif`; ctx.textAlign = 'center';
       ctx.fillText(`MAP ${world.level + 1} — ${world.name}`, WW / 2, WH / 2 + Math.round(10 * k));
       ctx.globalAlpha = 1;
     }
