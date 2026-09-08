@@ -18,6 +18,7 @@ export class Net {
     this.connected = false;
     this.rtt = 0;
     this.closedByUs = false;
+    this._everOpened = false;
     this.backoff = 500;
     this.clockOffset = 0;
     this._clockInit = false;
@@ -30,7 +31,12 @@ export class Net {
     Promise.resolve()
       .then(() => this.resolveUrl())
       .then((url) => { if (!this.closedByUs) this._open(url); })
-      .catch(() => this._scheduleReconnect());
+      .catch((err) => {
+        // A silent retry loop here is indistinguishable from a dead ws_url, which
+        // is exactly how a stale direct-mode registration hid for a whole release.
+        console.error('[FW] could not resolve a connect URL — access mint failed?', err);
+        this._scheduleReconnect();
+      });
   }
 
   _open(url) {
@@ -39,6 +45,7 @@ export class Net {
     this.ws = ws;
 
     ws.onopen = () => {
+      this._everOpened = true;
       this.backoff = 500;
       this._clockInit = false;   // re-anchor the server-clock estimate on reconnect
       ws.send(JSON.stringify({ t: 'hello', name: this.name }));
@@ -68,10 +75,15 @@ export class Net {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       this.connected = false;
       clearInterval(this._pingTimer);
       if (this.closedByUs) return;
+      // Never-opened + non-clean close means the URL itself is wrong (dead host,
+      // stale ws_url in the service registry) — say so instead of looping mutely.
+      if (!this._everOpened) {
+        console.error(`[FW] websocket never opened (code ${ev.code}) — ws_url=${url.split('?')[0]}`);
+      }
       this._scheduleReconnect();
     };
     ws.onerror = () => { /* onclose follows */ };

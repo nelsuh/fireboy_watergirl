@@ -14,8 +14,8 @@
 // Override the API host / Railway URL via env if they differ:
 //   USION_API_URL   (default https://mobile.mongolai.mn — same host the server
 //                    verifies JWKS against, see server/config.js)
-//   WS_URL          (default wss://fireboywatergirl-production.up.railway.app/ws)
-//   IFRAME_URL      (default https://fireboywatergirl-production.up.railway.app/)
+//   WS_URL          (default wss://fireboy-watergirl-production-39e3.up.railway.app/ws)
+//   IFRAME_URL      (default https://fireboy-watergirl-production-39e3.up.railway.app/)
 //
 // Field names below follow references/publishing.md "Path C". If your backend's
 // registry schema differs, the GET step prints the live doc so you can see the
@@ -24,9 +24,9 @@
 const API_URL   = (process.env.USION_API_URL || 'https://mobile.mongolai.mn').replace(/\/$/, '');
 const TOKEN     = process.env.USION_API_TOKEN || '';
 const APPLY     = process.env.APPLY === '1';
-const SERVICE_ID = process.env.SERVICE_ID || 'fireboy-watergirl';
-const WS_URL    = process.env.WS_URL     || 'wss://fireboywatergirl-production.up.railway.app/ws';
-const IFRAME_URL = process.env.IFRAME_URL || 'https://fireboywatergirl-production.up.railway.app/';
+const SERVICE_ID = process.env.SERVICE_ID || 'fireboy-and-watergirl-dcb7ed3a';
+const WS_URL    = process.env.WS_URL     || 'wss://fireboy-watergirl-production-39e3.up.railway.app/ws';
+const IFRAME_URL = process.env.IFRAME_URL || 'https://fireboy-watergirl-production-39e3.up.railway.app/';
 
 if (!TOKEN) {
   console.error('Missing USION_API_TOKEN. Mint one in Service Creator → Agent API Access.');

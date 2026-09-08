@@ -71,6 +71,11 @@ accepted when the server runs with `DEV_ALLOW_UNSIGNED=1`, never in production).
 The Railway server serves the static client too (one host for both the iframe and
 the WebSocket), so a single deploy ships everything:
 
+The live Railway host is **`fireboy-watergirl-production-39e3.up.railway.app`**
+(serves both the iframe and `/ws`). Whenever that hostname changes, the service
+registry's `ws_url` MUST be re-registered — a stale `ws_url` still mints valid
+tokens, so every client just loops on "Reconnecting…" with no visible error.
+
 ```bash
 railway up --detach        # railway.json sets start command + /healthz
 # NODE_ENV=production is set on the service; DEV_ALLOW_UNSIGNED must stay UNSET.

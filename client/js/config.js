@@ -11,7 +11,7 @@
 export const SERVICE_ID = 'fireboy-and-watergirl-dcb7ed3a';
 
 // Railway game server, used only for standalone/dev connects. Update at deploy.
-export const DEV_SERVER_URL = 'wss://fireboywatergirl-production.up.railway.app/ws';
+export const DEV_SERVER_URL = 'wss://fireboy-watergirl-production-39e3.up.railway.app/ws';
 
 export function devServerUrl() {
   const q = new URLSearchParams(location.search).get('server');
