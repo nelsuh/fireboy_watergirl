@@ -12,6 +12,15 @@
 }
 [hidden] { display: none !important; }
 
+/* Safe-area insets (physical screen). The Usion GameTok host draws the game edge
+   to edge: the notch covers the top, the home indicator the bottom. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
 html, body {
   width: 100%; height: 100%;
   background: #08101a;
@@ -24,22 +33,35 @@ html, body {
   color: #eef1f7;
 }
 
-#rot { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; overflow: hidden; }
+/* --c-*: the insets of #rot's OWN edges. Unrotated they are the physical ones.
+   Rotated 90deg clockwise, content-left = physical top (notch), content-right =
+   physical bottom (home indicator), content-top = physical right, and
+   content-bottom = physical left, where the host's 24px exit strip swallows
+   touches while playing (--c-edge keeps controls clear of it). */
+#rot {
+  position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; overflow: hidden;
+  --c-top: var(--safe-top); --c-right: var(--safe-right);
+  --c-bottom: var(--safe-bottom); --c-left: var(--safe-left);
+  --c-edge: 0px;
+}
 #rot.rotated {
   width: 100vh; height: 100vw;
   transform: rotate(90deg) translateY(-100%);
   transform-origin: top left;
+  --c-top: var(--safe-right); --c-right: var(--safe-bottom);
+  --c-bottom: var(--safe-left); --c-left: var(--safe-top);
+  --c-edge: 28px;
 }
 #board { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
 
 /* ── Touch controls ─────────────────────────────────────── */
 .pad {
   position: absolute;
-  bottom: max(12px, env(safe-area-inset-bottom));
+  bottom: max(12px, calc(var(--c-bottom) + var(--c-edge)));
   display: flex; gap: 10px; z-index: 5;
 }
-.pad-left  { left: 16px; }
-.pad-right { right: 16px; }
+.pad-left  { left: max(16px, calc(var(--c-left) + 8px)); }
+.pad-right { right: max(16px, calc(var(--c-right) + 8px)); }
 .ctl {
   width: 60px; height: 60px; border-radius: 50%;
   border: 1px solid rgba(211,229,255,.28);
@@ -69,12 +91,13 @@ html, body {
 }
 
 /* ── HUD status (ping / connection) ─────────────────────── */
-#status { position: absolute; top: 9px; left: 12px; z-index: 6; font: 11px/1.2 "Trebuchet MS", sans-serif; color: rgba(225,237,255,.46); }
+#status { position: absolute; top: calc(var(--c-top) + 9px); left: max(12px, calc(var(--c-left) + 8px)); z-index: 6; font: 11px/1.2 "Trebuchet MS", sans-serif; color: rgba(225,237,255,.46); }
 #status .bad { color: #ff9a8a; }
 
 /* ── Overlays ───────────────────────────────────────────── */
 .overlay {
   position: absolute; inset: 0;
+  padding: var(--c-top) var(--c-right) var(--c-bottom) var(--c-left);
   background: rgba(5, 9, 15, .76);
   backdrop-filter: blur(4px);
   display: flex; align-items: center; justify-content: center;
@@ -123,7 +146,7 @@ html, body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .toast {
-  position: absolute; top: 12px; left: 50%;
+  position: absolute; top: calc(var(--c-top) + 12px); left: 50%;
   transform: translateX(-50%);
   background: rgba(14, 22, 33, .94);
   color: #f0f5ff;

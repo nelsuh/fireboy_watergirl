@@ -34,10 +34,27 @@ export class Renderer {
     this.cw = w; this.chh = h;
     this.canvas.width = Math.round(w * this.dpr);
     this.canvas.height = Math.round(h * this.dpr);
+    // The canvas bleeds edge to edge (under the notch / home indicator); the
+    // world and HUD fit inside the safe area. Insets are #rot's own edges, so
+    // they are already mapped through the rotation (see --c-* in style.css).
+    const s = this.safe = this._safeInsets();
     const padH = Math.min(h * 0.22, 96);
-    this.scale = Math.min(w / WW, (h - padH) / WH);
-    this.ox = (w - WW * this.scale) / 2;
-    this.oy = Math.max(0, (h - padH - WH * this.scale) / 2);
+    const aw = w - s.left - s.right, ah = h - s.top - padH;
+    this.scale = Math.min(aw / WW, ah / WH);
+    this.ox = s.left + (aw - WW * this.scale) / 2;
+    this.oy = s.top + Math.max(0, (ah - WH * this.scale) / 2);
+  }
+
+  // Custom properties holding env() don't resolve through getPropertyValue, so
+  // measure them as padding on a probe inside #rot (which remaps them).
+  _safeInsets() {
+    const p = document.createElement('div');
+    p.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;padding:var(--c-top) var(--c-right) var(--c-bottom) var(--c-left)';
+    this.rot.appendChild(p);
+    const c = getComputedStyle(p);
+    const r = { top: parseFloat(c.paddingTop) || 0, right: parseFloat(c.paddingRight) || 0, bottom: parseFloat(c.paddingBottom) || 0, left: parseFloat(c.paddingLeft) || 0 };
+    p.remove();
+    return r;
   }
 
   spawnBurst(x, y, col, n) {
@@ -90,8 +107,8 @@ export class Renderer {
     this._hero(world, world.heroes[status.remoteKey], status.remoteKey === 'f', null, !status.partnerHere);
     this._hero(world, world.heroes[status.myKey], status.myKey === 'f', status.myRenderPos, false);
     this._particles();
-    this._hud(world, status);
     ctx.restore();
+    this._hud(world, status);
   }
 
   // Build the static level layer (cave + noise + tiles) into an offscreen canvas
@@ -312,17 +329,30 @@ export class Renderer {
     // physical size (k=1 on desktop, ~2.2 on a rotated phone).
     const k = Math.max(1, 1 / (this.scale || 1));
     const barH = Math.round(27 * k), yb = Math.round(18 * k);
+    // On a rotated phone the bar spans the whole safe width, not just the
+    // letterboxed world: that pushes the counters to the far end, clear of the
+    // host's lock button (content top, ~76% across). Elsewhere it's the world.
+    // The bar itself bleeds to the screen edges; its text stays inside the insets.
+    let x0 = 0, x1 = WW, b0 = 0, b1 = WW;
+    if (this.rot.classList.contains('rotated')) {
+      const s = this.safe || { left: 0, right: 0 };
+      x0 = Math.min(0, (s.left - this.ox) / this.scale);
+      x1 = Math.max(WW, (this.cw - s.right - this.ox) / this.scale);
+      b0 = Math.min(0, -this.ox / this.scale);
+      b1 = Math.max(WW, (this.cw - this.ox) / this.scale);
+    }
+    const WL = b1 - b0;
     const hud = ctx.createLinearGradient(0, 0, 0, barH);
     hud.addColorStop(0, 'rgba(8,13,22,0.82)'); hud.addColorStop(1, 'rgba(8,13,22,0.56)');
-    ctx.fillStyle = hud; ctx.fillRect(0, 0, WW, barH);
-    const split = ctx.createLinearGradient(0, 0, WW, 0);
+    ctx.fillStyle = hud; ctx.fillRect(b0, 0, WL, barH);
+    const split = ctx.createLinearGradient(b0, 0, b1, 0);
     split.addColorStop(0, 'rgba(255,105,61,0.72)'); split.addColorStop(0.47, 'rgba(255,177,95,0.32)'); split.addColorStop(0.53, 'rgba(105,193,255,0.32)'); split.addColorStop(1, 'rgba(74,166,236,0.72)');
-    ctx.fillStyle = split; ctx.fillRect(0, barH - Math.max(1, Math.round(k)), WW, Math.max(1, Math.round(k)));
+    ctx.fillStyle = split; ctx.fillRect(b0, barH - Math.max(1, Math.round(k)), WL, Math.max(1, Math.round(k)));
     ctx.fillStyle = '#e8eff8'; ctx.font = `700 ${Math.round(13 * k)}px "Trebuchet MS", sans-serif`; ctx.textAlign = 'left';
-    ctx.fillText(`MAP ${world.level + 1}/${TOTAL_LEVELS} · ${world.name}`, 10, yb);
+    ctx.fillText(`MAP ${world.level + 1}/${TOTAL_LEVELS} · ${world.name}`, x0 + 10, yb);
     const got = world.gems.filter((g) => g.taken).length;
     ctx.textAlign = 'right';
-    ctx.fillText(`💎 ${got}   ☠ ${status.deaths}`, WW - 10, yb);
+    ctx.fillText(`💎 ${got}   ☠ ${status.deaths}`, x1 - 10, yb);
 
     const best = status.best;
     const tStr = '⏱ ' + fmtTime(status.mapTime);
@@ -333,7 +363,7 @@ export class Renderer {
     const tW = ctx.measureText(tStr).width;
     ctx.font = smF;
     const bW = best != null ? ctx.measureText(bStr).width : 0;
-    const startX = WW / 2 - (tW + bW) / 2;
+    const startX = (x0 + x1) / 2 - (tW + bW) / 2;
     ctx.font = bigF;
     ctx.fillStyle = (best != null && status.mapTime > best) ? '#ff9a8a' : '#ffe08a';
     ctx.fillText(tStr, startX, yb);
