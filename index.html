@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Fire &amp; Water</title>
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 </head>
 
 <body>
@@ -21,6 +21,21 @@
     <button class="ctl ctl-swap" id="btnSwap" aria-label="swap" hidden>⇄</button>
     <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
   </div>
+
+  <!-- Quick chat (real 2-player rooms only, script.js) — bottom centre,
+       between the move pad and the jump pad, inside the rotating stage -->
+  <button class="chat-toggle" id="chatToggle" type="button" aria-label="Quick chat" aria-expanded="false" aria-controls="chatPicker" hidden>💬</button>
+  <div class="chat-picker" id="chatPicker" aria-hidden="true">
+    <div class="chat-picker-title" id="chatPickerTitle">Quick chat</div>
+    <div class="chat-emojis" id="chatEmojis" role="group"></div>
+    <div class="chat-phrases" id="chatPhrases"></div>
+    <form class="custom-chat-form" id="customChatForm" hidden>
+      <button class="custom-chat-back" id="customChatBack" type="button" aria-label="Back to quick chat">←</button>
+      <input class="custom-chat-input" id="customChatInput" type="text" maxlength="60" autocomplete="off" autocorrect="off" enterkeyhint="send" aria-label="Type a message…" placeholder="Type a message…">
+      <button class="custom-chat-send" id="customChatSend" type="submit">Send</button>
+    </form>
+  </div>
+  <div class="reaction-layer" id="reactionLayer" aria-live="polite"></div>
 
   <!-- Overlays -->
   <div id="waitingOverlay" class="overlay" hidden>
@@ -52,7 +67,7 @@
 
 <script src="https://usions.com/usion-sdk.js"></script>
 <script src="maps.js?v=5"></script>
-<script src="script.js?v=11"></script>
+<script src="script.js?v=12"></script>
 
 </body>
 </html>

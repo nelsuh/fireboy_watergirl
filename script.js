@@ -60,6 +60,10 @@ const STR = {
     lostConnection: "Lost connection — you control both heroes (⇄)",
     partnerLeft: "Partner left — you control both heroes (⇄)",
     roomCreated: "Room created — waiting for your partner…",
+    // quick chat
+    quickChat: "Quick chat", reactions: "Reactions", customChat: "Custom",
+    customChatPlaceholder: "Type a message…", chatSend: "Send", chatBack: "Back to quick chat",
+    chatPhrases: ["Wait for me!", "Go!", "Your turn", "Nice teamwork!", "Hit the lever!", "Oops!", "So close!", "One more?"],
   },
   mn: {
     appName: "Гал ба Ус",
@@ -78,6 +82,9 @@ const STR = {
     lostConnection: "Холболт тасарлаа — та хоёулангийнх нь удирдана (⇄)",
     partnerLeft: "Хамтрагч гарлаа — та хоёулангийнх нь удирдана (⇄)",
     roomCreated: "Өрөө үүслээ — хамтрагчаа хүлээж байна…",
+    quickChat: "Түргэн чат", reactions: "Сэтгэл хөдлөл", customChat: "Өөрөө бичих",
+    customChatPlaceholder: "Мессеж бичих…", chatSend: "Илгээх", chatBack: "Түргэн чат руу буцах",
+    chatPhrases: ["Намайг хүлээгээрэй!", "Яв!", "Чиний ээлж", "Гоё багийн ажил!", "Хөшүүргийг тат!", "Өө, алдчихлаа!", "Бага л дутлаа!", "Дахиад нэг үү?"],
   },
 };
 let LANG = "en";
@@ -116,6 +123,7 @@ function applyLang(lang) {
   // The end title is the victory line once the run is finished.
   const et = document.getElementById("endTitle");
   if (et) et.textContent = (typeof ended !== "undefined" && ended) ? t("allMapsCleared", TOTAL_LEVELS) : t("youDidIt");
+  if (typeof buildQuickChatPicker === "function") buildQuickChatPicker();
 }
 
 // ── DOM ───────────────────────────────────────────────────
@@ -701,12 +709,16 @@ function frame(ts, fromWatchdog) {
   for (const k of simulatedHeroes()) { const h = chars[k]; h.rx = h.x; h.ry = h.y; }
   introT = Math.max(0, introT - dt);
   draw();
+  placeChatBubbles();
 }
 
 // ── Rendering ─────────────────────────────────────────────
 let cw = 0, chh = 0, dpr = 1, scale = 1, ox = 0, oy = 0;
 
 function resize() {
+  // While the chat input has focus the keyboard shrinks the viewport: re-fitting
+  // would un-rotate the stage and squeeze the map. Re-fit once it closes.
+  if (chatTyping()) return;
   const portrait = window.innerHeight > window.innerWidth * 1.05;
   rot.classList.toggle("rotated", portrait);
   const w = rot.clientWidth, h = rot.clientHeight;
@@ -1193,6 +1205,9 @@ function handleRealtime(m) {
     case "restart":
       if (Date.now() - lastRestartAt > 1500) restartAll(false);
       break;
+    case "quick_chat":
+      receiveQuickChat(m.player_id, d.phrase);
+      break;
   }
 }
 
@@ -1238,6 +1253,7 @@ function showReconnecting() {
   netPaused = true;
   pauseText.textContent = t("reconnecting");
   pauseOverlay.hidden = false;
+  updateQuickChatVisibility();
 }
 
 function recoverFromPause() {
@@ -1325,6 +1341,201 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+// ── Quick chat ────────────────────────────────────────────
+// Cosmetic and transient: rides realtime() (never action(), never the platform
+// chat), never touches the sim. Shown only with a real partner connected —
+// solo, standalone and "waiting for partner" have nobody to talk to.
+const CHAT_EMOJIS = ["😂", "😘", "😔", "😡", "😱", "😜", "😎", "🔥", "🎉", "😴", "👏", "👍"];
+const MAX_CHAT_LENGTH = 60;
+const CHAT_SEND_GAP = 700;      // per sender, spam guard
+const CHAT_RECV_GAP = 400;      // per sender on receive (slack for network bunching)
+const chatToggle = document.getElementById("chatToggle");
+const chatPicker = document.getElementById("chatPicker");
+const chatEmojis = document.getElementById("chatEmojis");
+const chatPhrases = document.getElementById("chatPhrases");
+const chatForm = document.getElementById("customChatForm");
+const chatBackBtn = document.getElementById("customChatBack");
+const chatInputEl = document.getElementById("customChatInput");
+const chatSendBtn = document.getElementById("customChatSend");
+const reactionLayer = document.getElementById("reactionLayer");
+let chatOpen = false, chatCustom = false, lastChatSent = 0;
+const lastChatFrom = {};
+let chatBubbles = [];           // { el, hero, born }
+
+function normalizeChat(v) {
+  if (typeof v !== "string") return "";
+  const m = v.trim().replace(/\s+/g, " ");
+  return m && m.length <= MAX_CHAT_LENGTH ? m : "";
+}
+function chatTyping() { return !!chatInputEl && document.activeElement === chatInputEl; }
+
+function chatButton(cls, text, onTap) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = cls;
+  b.textContent = text;
+  b.addEventListener("click", onTap);
+  return b;
+}
+
+function buildQuickChatPicker() {
+  if (!chatPicker) return;
+  document.getElementById("chatPickerTitle").textContent = t("quickChat");
+  chatToggle.setAttribute("aria-label", t("quickChat"));
+  chatEmojis.setAttribute("aria-label", t("reactions"));
+  chatEmojis.textContent = "";
+  CHAT_EMOJIS.forEach(e => chatEmojis.appendChild(chatButton("chat-emoji", e, () => sendQuickChat(e))));
+  chatPhrases.textContent = "";
+  t("chatPhrases").forEach(p => chatPhrases.appendChild(chatButton("chat-phrase", p, () => sendQuickChat(p))));
+  const custom = chatButton("chat-phrase chat-custom-toggle", "✏️ " + t("customChat"), () => setCustomChat(true));
+  custom.setAttribute("aria-controls", "customChatForm");
+  chatPhrases.appendChild(custom);
+  chatInputEl.placeholder = t("customChatPlaceholder");
+  chatInputEl.setAttribute("aria-label", t("customChatPlaceholder"));
+  chatSendBtn.textContent = t("chatSend");
+  chatBackBtn.setAttribute("aria-label", t("chatBack"));
+}
+
+// Keep the custom row above the keyboard. iOS overlays the keyboard instead of
+// resizing, so measure what it covers through visualViewport. The stage may be
+// turned a quarter (portrait phone): then the keyboard eats stage WIDTH from the
+// right edge, so the offset moves to the x axis.
+function updateChatKeyboardInset() {
+  if (!chatPicker) return;
+  const vv = window.visualViewport;
+  let covered = 0;
+  if (chatCustom && vv) covered = Math.max(0, Math.min(window.innerHeight * 0.7, window.innerHeight - (vv.height + vv.offsetTop)));
+  const rotated = rot.classList.contains("rotated");
+  chatPicker.style.setProperty("--kb-y", (rotated ? 0 : Math.round(covered)) + "px");
+  chatPicker.style.setProperty("--kb-x", (rotated ? Math.round(covered) : 0) + "px");
+}
+
+function setCustomChat(open) {
+  chatCustom = !!open;
+  chatPicker.classList.toggle("custom-mode", chatCustom);
+  chatForm.hidden = !chatCustom;
+  if (chatCustom) {
+    input.left = input.right = input.jump = false;   // nothing stays held while typing
+    try { chatInputEl.focus({ preventScroll: true }); } catch (_) { chatInputEl.focus(); }
+  } else if (chatTyping()) chatInputEl.blur();
+  updateChatKeyboardInset();
+}
+
+function setChatOpen(open) {
+  chatOpen = !!open;
+  if (!chatOpen) setCustomChat(false);
+  chatPicker.classList.toggle("show", chatOpen);
+  chatPicker.setAttribute("aria-hidden", String(!chatOpen));
+  chatToggle.setAttribute("aria-expanded", String(chatOpen));
+}
+
+function quickChatAvailable() {
+  return isMultiplayer && partnerHere && !netPaused && !bootedStandalone &&
+    !!myId && players.some(id => id && id !== myId);
+}
+
+function updateQuickChatVisibility() {
+  if (!chatToggle) return;
+  const show = quickChatAvailable();
+  if (chatToggle.hidden === show) chatToggle.hidden = !show;
+  if (!show && chatOpen) setChatOpen(false);
+}
+
+function sendQuickChat(value) {
+  const phrase = normalizeChat(value);
+  if (!phrase || !quickChatAvailable()) return false;
+  const now = Date.now();
+  if (now - lastChatSent < CHAT_SEND_GAP) return false;
+  lastChatSent = now;
+  setChatOpen(false);
+  showChatBubble(myChar, phrase);
+  sendRT("quick_chat", { phrase });
+  return true;
+}
+
+function receiveQuickChat(from, value) {
+  const phrase = normalizeChat(value);
+  if (!phrase || !from || from === myId || !partnerHere) return;
+  const now = Date.now();
+  if (now - (lastChatFrom[from] || 0) < CHAT_RECV_GAP) return;
+  lastChatFrom[from] = now;
+  showChatBubble(remoteChar, phrase);
+}
+
+// A short-lived bubble over the sender's hero; it follows the hero every frame.
+function showChatBubble(hero, phrase) {
+  if (!reactionLayer) return;
+  chatBubbles = chatBubbles.filter(b => { if (b.hero === hero) { b.el.remove(); return false; } return true; });
+  const el = document.createElement("div");
+  el.className = "reaction-bubble hero-" + hero + (CHAT_EMOJIS.includes(phrase) ? " is-emoji" : "");
+  el.textContent = phrase;
+  reactionLayer.appendChild(el);
+  const b = { el, hero, born: Date.now() };
+  chatBubbles.push(b);
+  placeChatBubbles();
+  requestAnimationFrame(() => el.classList.add("pop"));
+  setTimeout(() => el.classList.add("out"), 2100);
+  setTimeout(() => { el.remove(); chatBubbles = chatBubbles.filter(x => x !== b); }, 2550);
+}
+
+// Stage px from the canvas transform (ox/oy/scale); the layer lives inside the
+// rotated stage, so this is right in portrait-rotated mode too.
+function placeChatBubbles() {
+  if (!chatBubbles.length || !chars) return;
+  const hudBottom = oy + 26 * scale + 4;
+  const placed = [];
+  for (const b of chatBubbles) {
+    const h = chars[b.hero];
+    if (!h) continue;
+    const w = b.el.offsetWidth, ht = b.el.offsetHeight;
+    const cx = ox + (h.rx + CHAR_W / 2) * scale;
+    let top = oy + (h.ry - 12) * scale - ht - 6;
+    let below = false;
+    if (top < hudBottom) { top = oy + (h.ry + CHAR_H) * scale + 6; below = true; }
+    const left = clamp(cx - w / 2, 6, Math.max(6, cw - w - 6));
+    // Heroes standing together: stack the second bubble over the first.
+    for (const o of placed) {
+      if (left < o.left + o.w && left + w > o.left && top < o.top + o.h && top + ht > o.top) {
+        top = below ? o.top + o.h + 4 : o.top - ht - 4;
+      }
+    }
+    placed.push({ left, top, w, h: ht });
+    b.el.style.left = Math.round(left) + "px";
+    b.el.style.top = Math.round(top) + "px";
+    b.el.classList.toggle("below", below);
+    b.el.style.setProperty("--tail-x", Math.round(clamp(cx - left, 12, w - 12)) + "px");
+  }
+}
+
+if (chatToggle) {
+  chatToggle.addEventListener("click", e => { e.stopPropagation(); setChatOpen(!chatOpen); });
+  chatPicker.addEventListener("click", e => e.stopPropagation());
+  chatBackBtn.addEventListener("click", () => setCustomChat(false));
+  chatForm.addEventListener("submit", e => {
+    e.preventDefault();
+    if (sendQuickChat(chatInputEl.value)) chatInputEl.value = "";
+  });
+  // Typing must never reach the movement keys (a/d/w/space/s/Tab on window).
+  const stopKeys = e => {
+    e.stopPropagation();
+    if (e.type === "keydown" && e.key === "Escape") { e.preventDefault(); setChatOpen(false); }
+  };
+  chatInputEl.addEventListener("keydown", stopKeys);
+  chatInputEl.addEventListener("keyup", stopKeys);
+  chatInputEl.addEventListener("blur", () => {
+    // iOS may have nudged the page to reveal the input; put it back and re-fit.
+    try { window.scrollTo(0, 0); } catch (_) {}
+    setTimeout(resize, 60);
+  });
+  document.addEventListener("click", () => { if (chatOpen) setChatOpen(false); });
+  window.addEventListener("keydown", e => { if (e.key === "Escape" && chatOpen) setChatOpen(false); });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", updateChatKeyboardInset);
+    window.visualViewport.addEventListener("scroll", updateChatKeyboardInset);
+  }
+  setInterval(updateQuickChatVisibility, 300);   // presence/mode flips live in many places
+}
+
 // ── Overlays ──────────────────────────────────────────────
 function showWaiting() { waitingOverlay.hidden = false; }
 function hideWaiting() { waitingOverlay.hidden = true; }
@@ -1334,6 +1545,7 @@ soloBtn.addEventListener("click", () => {
   isMultiplayer = false;     // partner can still join → onPlayerJoined flips us back
   soloControlBoth = true;
   btnSwap.hidden = false;
+  updateQuickChatVisibility();
   startGame();
 });
 
@@ -1391,6 +1603,7 @@ function registerGameHandlers() {
       showToast("Partner joined! You are Fireboy 🔥");
     }
     running = true;
+    updateQuickChatVisibility();
   });
 
   Usion.game.onPlayerLeft(d => {
@@ -1400,6 +1613,7 @@ function registerGameHandlers() {
     btnSwap.hidden = false;
     activeChar = myChar;
     showToast(t("partnerLeft"));
+    updateQuickChatVisibility();
   });
 
   Usion.game.onJoined((d) => {
