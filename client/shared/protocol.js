@@ -18,7 +18,9 @@ export const SPEED = 170;                        // run speed u/s
 export const JUMP_V = 575;                       // jump velocity
 export const GRAV = 1500, MAX_FALL = 920;
 export const LIFT_SPEED = 78;                    // platform glide u/s
-export const COYOTE = 0.08, JUMP_BUFFER = 0.12;
+export const COYOTE = 0.1, JUMP_BUFFER = 0.15;
+export const JUMP_CUT_GRAV = 3;                  // gravity × while rising with jump released (short hops)
+export const CORNER_NUDGE = 7;                   // px a head/ledge corner clip is slid around
 
 export const TOTAL_LEVELS = 5;
 export const MAX_PLAYERS_PER_ROOM = 2;           // co-op: Fireboy + Watergirl

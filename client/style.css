@@ -61,6 +61,8 @@ html, body {
   display: flex; gap: 10px; z-index: 5;
 }
 .pad-left  { left: max(16px, calc(var(--c-left) + 8px)); }
+/* one slide zone for ◀ ▶ (see input.js): grow the touch area past the buttons */
+.pad-left  { padding: 16px; margin: -16px; touch-action: none; }
 .pad-right { right: max(16px, calc(var(--c-right) + 8px)); }
 .ctl {
   width: 60px; height: 60px; border-radius: 50%;

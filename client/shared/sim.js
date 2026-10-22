@@ -12,6 +12,7 @@
 import {
   T, COLS, ROWS, WH, CHAR_W, CHAR_H, SPEED, JUMP_V, GRAV, MAX_FALL,
   LIFT_SPEED, COYOTE, JUMP_BUFFER, RESET_DELAY, DOOR_HOLD, TOTAL_LEVELS,
+  JUMP_CUT_GRAV, CORNER_NUDGE,
 } from './protocol.js';
 import { MAPS } from './maps.js';
 
@@ -141,6 +142,13 @@ function moveX(world, h, dx) {
   while (Math.abs(left) > 0.0001) {
     const d = Math.abs(left) > 8 ? step : left;
     if (rectHitsSolid(world, h.x + d, h.y, CHAR_W, CHAR_H)) {
+      // airborne and only the feet caught a ledge corner → pop up onto it
+      if (!h.grounded) {
+        let o = 1;
+        while (o <= CORNER_NUDGE && (rectHitsSolid(world, h.x, h.y - o, CHAR_W, CHAR_H)
+          || rectHitsSolid(world, h.x + d, h.y - o, CHAR_W, CHAR_H))) o++;
+        if (o <= CORNER_NUDGE) { h.y -= o; h.x += d; left -= d; continue; }
+      }
       const dir = Math.sign(d);
       let lo = 0, hi = Math.abs(d);
       for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (rectHitsSolid(world, h.x + dir * m, h.y, CHAR_W, CHAR_H)) hi = m; else lo = m; }
@@ -165,6 +173,17 @@ function moveY(world, h, dy) {
     const ny = h.y + d;
 
     if (rectHitsSolid(world, h.x, ny, CHAR_W, CHAR_H)) {
+      // rising and only clipped a ceiling corner → slide around it, keep the jump
+      if (dir < 0) {
+        let s = 0;
+        for (let o = 1; o <= CORNER_NUDGE && !s; o++) {
+          for (const c of [o, -o]) {
+            if (!rectHitsSolid(world, h.x + c, h.y, CHAR_W, CHAR_H)
+              && !rectHitsSolid(world, h.x + c, ny, CHAR_W, CHAR_H)) { s = c; break; }
+          }
+        }
+        if (s) { h.x += s; h.y = ny; left -= d; continue; }
+      }
       let lo = 0, hi = Math.abs(d);
       for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (rectHitsSolid(world, h.x, h.y + dir * m, CHAR_W, CHAR_H)) hi = m; else lo = m; }
       h.y += dir * lo;
@@ -224,7 +243,10 @@ export function stepHeroKinematics(world, h, input, dt) {
   h.jumpBuf = Math.max(0, h.jumpBuf - dt);
   h.coyote = Math.max(0, h.coyote - dt);
 
-  h.vy = Math.min(h.vy + GRAV * dt, MAX_FALL);
+  // jump released while still rising → fall back sooner (tap = short hop,
+  // hold = the full-height jump the levels are built around)
+  const g = h.vy < 0 && !input.jump ? GRAV * JUMP_CUT_GRAV : GRAV;
+  h.vy = Math.min(h.vy + g * dt, MAX_FALL);
   moveX(world, h, h.vx * dt);
   moveY(world, h, h.vy * dt);
 }

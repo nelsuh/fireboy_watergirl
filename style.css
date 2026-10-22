@@ -48,6 +48,8 @@ html, body {
   z-index: 5;
 }
 .pad-left  { left: 14px; }
+/* one slide zone for ◀ ▶ (see script.js): grow the touch area past the buttons */
+.pad-left  { padding: 16px; margin: -16px; touch-action: none; }
 .pad-right { right: 14px; }
 
 .ctl {

@@ -26,7 +26,9 @@ const SPEED = 170;                            // run speed u/s
 const JUMP_V = 575;                           // jump velocity (≈3.3 tiles high — 3-tile ledges reachable, 4-tile gates are not)
 const GRAV = 1500, MAX_FALL = 920;
 const LIFT_SPEED = 78;                        // platform glide u/s
-const COYOTE = 0.08, JUMP_BUFFER = 0.12;      // jump feel helpers
+const COYOTE = 0.1, JUMP_BUFFER = 0.15;       // jump feel helpers
+const JUMP_CUT_GRAV = 3;                      // gravity x while rising with jump released (short hops)
+const CORNER_NUDGE = 7;                       // px a head/ledge corner clip is slid around
 const DT = 1 / 60;
 
 const CH_COLORS = { 1: "#ffd34d", 2: "#b98bff", 3: "#59e0d8", 4: "#ff7ab8" };
@@ -350,6 +352,13 @@ function moveX(h, dx) {
   while (Math.abs(left) > 0.0001) {
     const d = Math.abs(left) > 8 ? step : left;
     if (rectHitsSolid(h.x + d, h.y, CHAR_W, CHAR_H)) {
+      // airborne and only the feet caught a ledge corner -> pop up onto it
+      if (!h.grounded) {
+        let o = 1;
+        while (o <= CORNER_NUDGE && (rectHitsSolid(h.x, h.y - o, CHAR_W, CHAR_H)
+          || rectHitsSolid(h.x + d, h.y - o, CHAR_W, CHAR_H))) o++;
+        if (o <= CORNER_NUDGE) { h.y -= o; h.x += d; left -= d; continue; }
+      }
       // snap flush to the obstruction
       const dir = Math.sign(d);
       let lo = 0, hi = Math.abs(d);
@@ -376,6 +385,17 @@ function moveY(h, dy) {
 
     // solid tiles + gates
     if (rectHitsSolid(h.x, ny, CHAR_W, CHAR_H)) {
+      // rising and only clipped a ceiling corner -> slide around it, keep the jump
+      if (dir < 0) {
+        let s = 0;
+        for (let o = 1; o <= CORNER_NUDGE && !s; o++) {
+          for (const c of [o, -o]) {
+            if (!rectHitsSolid(h.x + c, h.y, CHAR_W, CHAR_H)
+              && !rectHitsSolid(h.x + c, ny, CHAR_W, CHAR_H)) { s = c; break; }
+          }
+        }
+        if (s) { h.x += s; h.y = ny; left -= d; continue; }
+      }
       let lo = 0, hi = Math.abs(d);
       for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (rectHitsSolid(h.x, h.y + dir * m, CHAR_W, CHAR_H)) hi = m; else lo = m; }
       h.y += dir * lo;
@@ -503,7 +523,10 @@ function stepHero(k, dt) {
   h.jumpBuf = Math.max(0, h.jumpBuf - dt);
   h.coyote = Math.max(0, h.coyote - dt);
 
-  h.vy = Math.min(h.vy + GRAV * dt, MAX_FALL);
+  // jump released while still rising -> fall back sooner (tap = short hop,
+  // hold = the full-height jump the levels are built around)
+  const g = h.vy < 0 && !inp.jump ? GRAV * JUMP_CUT_GRAV : GRAV;
+  h.vy = Math.min(h.vy + g * dt, MAX_FALL);
   moveX(h, h.vx * dt);
   moveY(h, h.vy * dt);
 
@@ -1035,17 +1058,62 @@ function drawHUD() {
 }
 
 // ── Input ─────────────────────────────────────────────────
-function bindHold(el, key) {
-  const down = e => { e.preventDefault(); input[key] = true; el.classList.add("held"); };
-  const up = e => { e.preventDefault(); input[key] = false; el.classList.remove("held"); };
-  el.addEventListener("pointerdown", down);
-  el.addEventListener("pointerup", up);
-  el.addEventListener("pointercancel", up);
-  el.addEventListener("pointerleave", up);
+// The whole left pad is ONE slide zone: a captured finger steers toward the
+// nearest arrow centre, so a thumb can roll from ◀ to ▶ (or drift off the
+// buttons) without the hero stopping. Measured in screen space, so it survives
+// the forced-landscape rotation. Keyboard uses physical keys (e.code); the most
+// recent direction wins when both are held; everything releases on blur.
+const KEY_LEFT = new Set(["ArrowLeft", "KeyA"]);
+const KEY_RIGHT = new Set(["ArrowRight", "KeyD"]);
+const KEY_JUMP = new Set(["ArrowUp", "KeyW", "Space"]);
+const keys = { left: false, right: false, jump: false };
+let keyDir = 0;
+const dirPtrs = new Map(), jumpPtrs = new Set();
+
+function syncInput() {
+  let dir = 0;
+  for (const d of dirPtrs.values()) dir = d;
+  if (!dir) dir = keys.left && keys.right ? keyDir : keys.left ? -1 : keys.right ? 1 : 0;
+  input.left = dir < 0; input.right = dir > 0;
+  input.jump = keys.jump || jumpPtrs.size > 0;
+  btnLeft.classList.toggle("held", input.left);
+  btnRight.classList.toggle("held", input.right);
+  btnJump.classList.toggle("held", input.jump);
 }
-bindHold(btnLeft, "left");
-bindHold(btnRight, "right");
-bindHold(btnJump, "jump");
+
+(function bindMovePad() {
+  const pad = btnLeft.parentElement;
+  const dirAt = e => {
+    const a = btnLeft.getBoundingClientRect(), b = btnRight.getBoundingClientRect();
+    const da = Math.hypot(e.clientX - (a.left + a.width / 2), e.clientY - (a.top + a.height / 2));
+    const db = Math.hypot(e.clientX - (b.left + b.width / 2), e.clientY - (b.top + b.height / 2));
+    return da <= db ? -1 : 1;
+  };
+  pad.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    try { pad.setPointerCapture(e.pointerId); } catch (_) {}
+    dirPtrs.set(e.pointerId, dirAt(e));
+    syncInput();
+  });
+  pad.addEventListener("pointermove", e => {
+    if (!dirPtrs.has(e.pointerId)) return;
+    const d = dirAt(e);
+    if (d !== dirPtrs.get(e.pointerId)) { dirPtrs.set(e.pointerId, d); syncInput(); }
+  });
+  const up = e => { if (dirPtrs.delete(e.pointerId)) syncInput(); };
+  pad.addEventListener("pointerup", up);
+  pad.addEventListener("pointercancel", up);
+  pad.addEventListener("lostpointercapture", up);
+})();
+
+btnJump.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  try { btnJump.setPointerCapture(e.pointerId); } catch (_) {}
+  jumpPtrs.add(e.pointerId);
+  syncInput();
+});
+for (const t of ["pointerup", "pointercancel", "lostpointercapture"])
+  btnJump.addEventListener(t, e => { if (jumpPtrs.delete(e.pointerId)) syncInput(); });
 
 btnSwap.addEventListener("pointerdown", e => { e.preventDefault(); swapHero(); });
 
@@ -1054,18 +1122,35 @@ function swapHero() {
   activeChar = activeChar === "f" ? "w" : "f";
 }
 
+const typing = e => e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
 window.addEventListener("keydown", e => {
-  if (e.repeat) return;
-  if (e.key === "ArrowLeft" || e.key === "a") input.left = true;
-  if (e.key === "ArrowRight" || e.key === "d") input.right = true;
-  if (e.key === "ArrowUp" || e.key === "w" || e.key === " ") input.jump = true;
-  if (e.key === "Tab" || e.key === "s") { e.preventDefault(); swapHero(); }
+  if (typing(e)) return;
+  const c = e.code;
+  if (KEY_LEFT.has(c)) { keys.left = true; keyDir = -1; }
+  else if (KEY_RIGHT.has(c)) { keys.right = true; keyDir = 1; }
+  else if (KEY_JUMP.has(c)) keys.jump = true;
+  else if (c === "Tab" || c === "KeyS") { e.preventDefault(); if (!e.repeat) swapHero(); return; }
+  else return;
+  e.preventDefault();
+  syncInput();
 });
 window.addEventListener("keyup", e => {
-  if (e.key === "ArrowLeft" || e.key === "a") input.left = false;
-  if (e.key === "ArrowRight" || e.key === "d") input.right = false;
-  if (e.key === "ArrowUp" || e.key === "w" || e.key === " ") input.jump = false;
+  const c = e.code;
+  if (KEY_LEFT.has(c)) { keys.left = false; if (keys.right) keyDir = 1; }
+  else if (KEY_RIGHT.has(c)) { keys.right = false; if (keys.left) keyDir = -1; }
+  else if (KEY_JUMP.has(c)) keys.jump = false;
+  else return;
+  syncInput();
 });
+function releaseAllInput() {
+  keys.left = keys.right = keys.jump = false; keyDir = 0;
+  dirPtrs.clear(); jumpPtrs.clear();
+  syncInput();
+}
+window.addEventListener("blur", releaseAllInput);
+document.addEventListener("visibilitychange", () => { if (document.hidden) releaseAllInput(); });
+// Inside the host iframe the game never gets key focus on its own.
+window.addEventListener("pointerdown", () => { try { window.focus(); } catch (_) {} }, true);
 
 // ── Multiplayer ───────────────────────────────────────────
 function sendRT(type, data) {
@@ -1415,7 +1500,7 @@ function setCustomChat(open) {
   chatPicker.classList.toggle("custom-mode", chatCustom);
   chatForm.hidden = !chatCustom;
   if (chatCustom) {
-    input.left = input.right = input.jump = false;   // nothing stays held while typing
+    releaseAllInput();   // nothing stays held while typing
     try { chatInputEl.focus({ preventScroll: true }); } catch (_) { chatInputEl.focus(); }
   } else if (chatTyping()) chatInputEl.blur();
   updateChatKeyboardInset();
