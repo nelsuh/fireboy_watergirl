@@ -11,7 +11,7 @@
 
 import {
   DT, INTERP_DELAY_MS, TOTAL_LEVELS, HF_GROUND, HF_FACE_R, HF_DEAD, HF_DOOR,
-  PH_RESET, PH_ENDED, BTN_LEFT, BTN_RIGHT, BTN_JUMP, T, CHAR_W, CHAR_H,
+  PH_RESET, PH_ENDED, PH_LOBBY, BTN_LEFT, BTN_RIGHT, BTN_JUMP, T, CHAR_W, CHAR_H,
 } from '../shared/protocol.js';
 import { makeWorld, loadLevel, stepHeroKinematics } from '../shared/sim.js';
 
@@ -22,7 +22,7 @@ const HERO_KEYS = ['f', 'w'];
 export class Game {
   constructor(net) {
     this.net = net;
-    this.myHero = -1;               // 0 = Fireboy, 1 = Watergirl
+    this.myHero = -1;               // 0 = Дөл, 1 = Дусал
     this.myKey = 'f';
     this.remoteKey = 'w';
     this.names = new Map();         // hero -> name
@@ -47,7 +47,10 @@ export class Game {
     this.mapTime = 0;
     this.phase = 0;
     this.ended = false;
+    this.lobby = true;              // waiting hall until the server starts the match
     this.level = 0;
+    this.lobbyState = null;         // last {t:'lobby'} message (seats, ready flags)
+    this.avatars = new Map();       // hero -> avatar url
 
     // one-shot transitions surfaced to main.js for FX/overlays
     this.pendingEvents = [];        // {type,...}
@@ -67,7 +70,7 @@ export class Game {
     if (this.pending.length > 180) this.pending.shift();
 
     const me = this.world.heroes[this.myKey];
-    if (!me.dead && !this.ended && !(this.phase & PH_RESET)) {
+    if (!me.dead && !this.ended && !this.lobby && !(this.phase & PH_RESET)) {
       stepHeroKinematics(this.world, me, decodeButtons(buttons), DT);
       this._predictGems(me);
     }
@@ -77,7 +80,7 @@ export class Game {
   // Optimistically collect MY-colour gems the predicted hero overlaps (same test
   // as the server's heroGameplay). The pickup shows this frame; the server
   // confirms it a round-trip later (idempotent). I own my colour, so it never
-  // disagrees. Fireboy = red ('r'), Watergirl = blue ('b').
+  // disagrees. Дөл = red ('r'), Дусал = blue ('b').
   _predictGems(me) {
     const mineIsRed = this.myKey === 'f';
     const cx = me.x + CHAR_W / 2, cy = me.y + CHAR_H / 2;
@@ -110,6 +113,7 @@ export class Game {
     this.mapTime = snap.mapTimeCs / 100;
     this.phase = snap.phase;
     this.ended = !!(snap.phase & PH_ENDED);
+    this.lobby = !!(snap.phase & PH_LOBBY);
 
     // authoritative world state — a locally-predicted own-colour gem stays taken
     // until the server confirms it (else it would flicker back before the ack).
@@ -225,24 +229,38 @@ export class Game {
         this.myHero = msg.hero;
         this.myKey = HERO_KEYS[msg.hero];
         this.remoteKey = HERO_KEYS[1 - msg.hero];
-        this.names.clear();
-        for (const p of msg.players) this.names.set(p.hero, p.name);
+        this.names.clear(); this.avatars.clear();
+        for (const p of msg.players) { this.names.set(p.hero, p.name); this.avatars.set(p.hero, p.avatar || ''); }
+        this.lobby = msg.phase !== 'play';
+        this.ended = !!msg.ended;
         if (typeof msg.level === 'number' && msg.level !== this.world.level) loadLevel(this.world, msg.level);
         this.remotes.length = 0;
         this.pending.length = 0;
         this.predictedGems.clear();
         this.ready = true;
         break;
-      case 'join': this.names.set(msg.hero, msg.name); this.pendingEvents.push({ type: 'join', hero: msg.hero, name: msg.name }); break;
+      case 'join': this.names.set(msg.hero, msg.name); this.avatars.set(msg.hero, msg.avatar || ''); this.pendingEvents.push({ type: 'join', hero: msg.hero, name: msg.name }); break;
       case 'leave': this.names.delete(msg.hero); this.pendingEvents.push({ type: 'leave', hero: msg.hero }); break;
-      case 'level': this.pendingEvents.push({ type: 'level', to: msg.to, secs: msg.secs }); break;
-      case 'victory': this.pendingEvents.push({ type: 'victory', total: msg.total, per: msg.per || [] }); break;
-      case 'restart':
-        loadLevel(this.world, 0);
+      case 'lobby':
+        this.lobbyState = msg;
+        this.lobby = msg.phase !== 'play';
+        this.pendingEvents.push({ type: 'lobby', state: msg });
+        break;
+      case 'goto':
+        // fresh level for both players (start / next / retry / level select)
+        loadLevel(this.world, msg.level);
         this.remotes.length = 0; this.pending.length = 0;
         this.predictedGems.clear();
-        this.deaths = 0; this.ended = false;
-        this.pendingEvents.push({ type: 'restart' });
+        this.errX = 0; this.errY = 0; this._lastSnapTick = null;
+        this.deaths = 0; this.ended = false; this.lobby = false; this.mapTime = 0;
+        this.level = msg.level;
+        this.pendingEvents.push({ type: 'goto', level: msg.level });
+        break;
+      case 'cleared':
+        this.ended = true;
+        // the server's gem mask is final — adopt it before the result card reads it
+        for (let i = 0; i < this.world.gems.length; i++) this.world.gems[i].taken = !!(msg.gems & (1 << i));
+        this.pendingEvents.push({ type: 'cleared', level: msg.level, secs: msg.secs, deaths: msg.deaths });
         break;
       case 'error': this.pendingEvents.push({ type: 'error', reason: msg.reason }); break;
     }

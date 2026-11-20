@@ -8,9 +8,10 @@ import { MSG, DT, decodeSnapshot, decodePong, encodeInput, encodePing } from '..
 export class Net {
   // `resolveUrl` is an async () => wsUrl-with-token, called on every (re)connect
   // so a fresh access token is minted each time (platform tokens are short-lived).
-  constructor(resolveUrl, { name, onSnapshot, onEvent, onStatus }) {
+  constructor(resolveUrl, { name, hello, onSnapshot, onEvent, onStatus }) {
     this.resolveUrl = resolveUrl;
     this.name = name;
+    this.hello = hello || (() => ({}));
     this.onSnapshot = onSnapshot;
     this.onEvent = onEvent;
     this.onStatus = onStatus;
@@ -34,7 +35,7 @@ export class Net {
       .catch((err) => {
         // A silent retry loop here is indistinguishable from a dead ws_url, which
         // is exactly how a stale direct-mode registration hid for a whole release.
-        console.error('[FW] could not resolve a connect URL — access mint failed?', err);
+        console.error('[DD] could not resolve a connect URL — access mint failed?', err);
         this._scheduleReconnect();
       });
   }
@@ -48,7 +49,7 @@ export class Net {
       this._everOpened = true;
       this.backoff = 500;
       this._clockInit = false;   // re-anchor the server-clock estimate on reconnect
-      ws.send(JSON.stringify({ t: 'hello', name: this.name }));
+      ws.send(JSON.stringify({ ...this.hello(), t: 'hello', name: this.name }));
       this._pingTimer = setInterval(() => {
         if (ws.readyState === 1) ws.send(encodePing(performance.now()));
       }, 2000);
@@ -82,7 +83,7 @@ export class Net {
       // Never-opened + non-clean close means the URL itself is wrong (dead host,
       // stale ws_url in the service registry) — say so instead of looping mutely.
       if (!this._everOpened) {
-        console.error(`[FW] websocket never opened (code ${ev.code}) — ws_url=${url.split('?')[0]}`);
+        console.error(`[DD] websocket never opened (code ${ev.code}) — ws_url=${url.split('?')[0]}`);
       }
       this._scheduleReconnect();
     };

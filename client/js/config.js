@@ -17,7 +17,7 @@ export function devServerUrl() {
   const q = new URLSearchParams(location.search).get('server');
   if (q) return q;
   if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-    return 'ws://localhost:8080/ws';
+    return `ws://${location.host}/ws`;   // the local server serves this page too
   }
   return DEV_SERVER_URL;
 }

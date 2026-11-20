@@ -1,28 +1,42 @@
-// Boot + game loop. Runs inside the Usion host (identity + rooms + direct-mode
-// access from the SDK) and standalone (dev token). Fixed-tick (60 Hz) drives
-// input + prediction; rendering runs every animation frame with interpolation.
+// Boot + game loop for «Дөл ба Дусал». Runs inside the Usion host (identity +
+// rooms + direct-mode access from the SDK) and standalone (dev token). Fixed
+// tick (60 Hz) drives input + prediction; rendering runs every animation frame.
+//
+// Two modes share one renderer, FX director and set of screens:
+//   • SOLO (Explore / GameTok, `mode: 'single'`): the shared sim runs locally,
+//     one person drives both heroes and switches with ⇄. Starts instantly at the
+//     first unfinished level — zero taps.
+//   • MULTIPLAYER (a chat invite, or a solo run promoted by the host's Share
+//     button): authoritative server, waiting hall → level → result card → next.
 
 import { SERVICE_ID, devServerUrl, devRoomId } from './config.js';
-import { DT, TOTAL_LEVELS } from '../shared/protocol.js';
+import { DT, TOTAL_LEVELS, PH_RESET } from '../shared/protocol.js';
 import { Net } from './net.js';
 import { Input } from './input.js';
 import { Game } from './game.js';
 import { Renderer } from './render.js';
+import { Fx } from './fx.js';
 import { makeWorld, stepServer, loadLevel } from '../shared/sim.js';
 import { t, detectLang, applyLang } from './i18n.js';
+import * as progress from './progress.js';
+import * as ui from './ui.js';
+import { bindUnlock, music, play } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const rot = $('rot');
 const canvas = $('board');
 const renderer = new Renderer(rot, canvas);
+const fx = new Fx(renderer);
 const input = new Input();
+const NO_INPUT = { left: false, right: false, jump: false };
 
-const me = { userId: null, userName: '', embedded: false, roomId: null };
-let net = null, game = null, netStarted = false, started = false;
+const me = { userId: null, userName: '', avatar: '', embedded: false, roomId: null };
+let mode = null;            // 'solo' | 'net'
+let started = false;
 
-let bestTimes = {};
-try { bestTimes = JSON.parse(localStorage.getItem('fw:best') || '{}') || {}; } catch { bestTimes = {}; }
-const saveBest = () => { try { localStorage.setItem('fw:best', JSON.stringify(bestTimes)); } catch { /* ignore */ } };
+progress.loadLocal();
+bindUnlock();
+music(true);
 
 // Suppress the iOS double-tap / long-press selection magnifier (the "loupe") and
 // pinch/double-tap zoom. CSS (user-select/touch-callout/touch-action:none) covers
@@ -31,12 +45,14 @@ const saveBest = () => { try { localStorage.setItem('fw:best', JSON.stringify(be
 // fires before these, so gameplay taps are unaffected.
 document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+document.addEventListener('contextmenu', (e) => e.preventDefault());
 let _lastTapT = 0;
 document.addEventListener('touchend', (e) => {
   const now = performance.now();
-  if (now - _lastTapT < 350) e.preventDefault();   // kill the double-tap zoom/loupe
+  if (now - _lastTapT < 350 && !(e.target && e.target.closest && e.target.closest('button'))) e.preventDefault();
   _lastTapT = now;
 }, { passive: false });
+document.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
 // ---------------------------------------------------------------- Usion boot --
 function boot() {
@@ -50,16 +66,21 @@ function boot() {
       try {
         me.userId = (U.user && U.user.getId && U.user.getId()) || (config && config.userId) || null;
         me.userName = (U.user && U.user.getName && U.user.getName()) || (config && config.userName) || '';
+        me.avatar = (U.user && U.user.getAvatar && U.user.getAvatar()) || (config && config.userAvatar) || '';
         me.embedded = (U._isEmbedded != null) ? !!U._isEmbedded : true;
         me.roomId = (U.config && U.config.roomId) || (config && config.roomId) || null;
         if (U.game && U.game.onRoomAssigned) {
           U.game.onRoomAssigned((info) => onRoomAssigned((info && info.roomId) || (U.config && U.config.roomId)));
         }
       } catch { /* fall through */ }
+      progress.loadRemote();
       onReady();
     };
     U.init(ready);
-    setTimeout(() => ready(null), 3000);   // guard: never hang on a silent host
+    // Guard: never hang on a silent host. A plain browser tab (top-level, not the
+    // Usion mobile WebView) has no host at all, so don't make it wait.
+    const hosted = window.self !== window.top || !!window.ReactNativeWebView;
+    setTimeout(() => ready(null), hosted ? 3000 : 250);
   } else {
     me.embedded = false;
     onReady();
@@ -67,34 +88,22 @@ function boot() {
 }
 
 function onReady() {
-  const who = $('whoami');
-  if (who) who.textContent = me.userName ? t('playingAs', me.userName) : (me.embedded ? '' : t('guest'));
-  // "Play again" on the victory card still needs wiring.
-  $('againBtn')?.addEventListener('click', () => {
-    $('endOverlay').hidden = true;
-    if (net) net.sendJson({ t: 'restart' });
-    else if (soloActive) restartSolo();
-  });
-  // Start card removed — jump straight into the game as soon as identity is ready.
   if (started) return;
   started = true;
-  const start = $('start'); if (start) start.style.display = 'none';
+  $('btnMenu').addEventListener('click', (e) => { e.preventDefault(); play('click'); openPauseMenu(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' || e.code === 'KeyP') {
+      e.preventDefault();
+      if (ui.anyOpen()) { if (!$('menuOverlay').hidden) ui.hide('menuOverlay'); }
+      else openPauseMenu();
+    }
+  });
   connectAndPlay();
-}
-
-let toastTimer = 0;
-function toast(text, ms = 2400) {
-  const el = $('toast'); if (!el) return;
-  el.textContent = text; el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }
 
 // Am I a real (invited) multiplayer session? Derive from the launch MODE, never
 // from the presence of a roomId — GameTok forces mode:'single' but still hands us
-// an auto `standalone_` room for SDK plumbing (see extra/gametok.md). Treating
-// that room as multiplayer was routing GameTok into the networked one-hero path
-// (no swap button). Only a genuine chat game-invite is multiplayer.
+// an auto `standalone_` room for SDK plumbing (see extra/gametok.md).
 function launchedMultiplayer() {
   try {
     const U = window.Usion;
@@ -107,34 +116,25 @@ function launchedMultiplayer() {
   } catch { return false; }
 }
 
-// ------------------------------------------------------------- mode selection --
 function connectAndPlay() {
   // Standalone/dev override: ?dev=1 forces a direct WS connect with a dev token
   // (server must run with DEV_ALLOW_UNSIGNED=1). Handy for local two-tab testing.
   if (/[?&]dev=1/.test(location.search)) { startNet(() => Promise.resolve(devUrl())); return; }
-  if (me.embedded && launchedMultiplayer() && me.roomId) {
-    // Genuine chat game-invite: host-authoritative 2-seat networked match.
-    startNet(() => platformUrl(me.roomId));
-  } else if (me.embedded) {
-    // GameTok / Explore solo: local both-hero co-op with the ⇄ swap button.
-    // (Explore can still promote to a live room via the host Share button.)
-    startSoloPractice();
-    if (!me.roomId) toast('Practice mode — tap Share above to play with a friend', 3600);
-  } else {
-    startNet(() => Promise.resolve(devUrl()));
+  if (me.embedded && launchedMultiplayer() && me.roomId) startNet(() => platformUrl(me.roomId));
+  else {
+    startSolo(progress.nextLevel());
+    if (me.embedded && !me.roomId) ui.toast(t('practice'), 4200);
   }
 }
 
 async function platformUrl(roomId) {
-  // Use the AUTHORITATIVE service id from the host (config.serviceId) — the
-  // platform assigns an auto-generated hashed slug (e.g. fireboy-and-watergirl-
-  // dcb7ed3a), NOT the clean SERVICE_ID constant, and a mismatched serviceId
-  // makes _fetchDirectAccess 400. The server's SERVICE_ID must equal this too
-  // (see server/config.js) or the minted token's audience is rejected 4002.
+  // Use the AUTHORITATIVE service id from the host (config.serviceId): the
+  // platform assigns a hashed slug, and the server's SERVICE_ID must equal it or
+  // the minted token's audience is rejected 4002.
   const svc = (window.Usion && window.Usion.config && window.Usion.config.serviceId) || SERVICE_ID;
   const access = await window.Usion.game._fetchDirectAccess({ roomId, serviceId: svc, protocolVersion: '2' });
   if (!access || !access.ws_url || !access.access_token) {
-    console.error('[FW] bad direct-access payload — is the service registered connection_mode:"direct"?', access);
+    console.error('[DD] bad direct-access payload — is the service registered connection_mode:"direct"?', access);
     throw new Error('bad access payload');
   }
   const sep = access.ws_url.indexOf('?') === -1 ? '?' : '&';
@@ -144,211 +144,266 @@ async function platformUrl(roomId) {
 function devUrl() {
   const room = devRoomId();
   const uid = String(me.userId || `guest-${Math.floor(Math.random() * 9999)}`).replace(/[^\w-]/g, '-');
-  const token = `dev:${uid}:${room}`;
   const base = devServerUrl();
   const sep = base.indexOf('?') === -1 ? '?' : '&';
-  return `${base}${sep}token=${encodeURIComponent(token)}`;
+  return `${base}${sep}token=${encodeURIComponent(`dev:${uid}:${room}`)}`;
 }
 
 function onRoomAssigned(roomId) {
-  if (!roomId || netStarted) return;
+  if (!roomId || mode === 'net') return;
   me.roomId = roomId;
-  stopSoloPractice();
-  $('start').style.display = 'none';
-  toast('Match starting…', 1600);
+  ui.hideAll();
+  ui.toast(t('matchStarting'), 1600);
   startNet(() => platformUrl(roomId));
 }
 
-// -------------------------------------------------------- multiplayer session --
-let introT = 0, prevLevel = -1;
+// ================================================================ main loop ==
+let last = performance.now(), acc = 0, introT = 0, shownLevel = -1;
+
+// Before the host answers, draw the level the player will most likely start on
+// (still, no sim) so the first frames are the game, not a blank screen.
+const bootWorld = makeWorld(progress.nextLevel());
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  let dt = (now - last) / 1000; last = now;
+  if (dt > 0.25) { dt = 0; acc = 0; }
+  if (mode === 'solo') soloFrame(dt);
+  else if (mode === 'net') netFrame(dt);
+  else drawWorld(bootWorld, dt, { myKey: 'f', remoteKey: 'w', myRenderPos: null, deaths: 0, mapTime: 0, partnerHere: true, solo: false });
+}
+requestAnimationFrame(loop);
+
+function drawWorld(world, dt, status) {
+  if (world.level !== shownLevel) { shownLevel = world.level; introT = 1.6; }
+  introT = Math.max(0, introT - dt);
+  status.intro = introT;
+  renderer.draw(world, dt, status);
+}
+
+// One place that decides what the pause menu's buttons do in each mode.
+function openPauseMenu() {
+  if (ui.anyOpen()) return;
+  ui.openMenu({
+    onResume: () => {},
+    onRestart: () => gotoLevel(currentLevel()),
+    onLevels: () => openLevelSelect(),
+  });
+}
+function openLevelSelect() {
+  ui.openLevels(currentLevel(), (i) => gotoLevel(i), () => {});
+}
+function currentLevel() {
+  if (mode === 'solo' && solo.world) return solo.world.level;
+  if (mode === 'net' && net.game) return net.game.level;
+  return 0;
+}
+function gotoLevel(i) {
+  i = Math.max(0, Math.min(TOTAL_LEVELS - 1, i));
+  if (mode === 'solo') soloGoto(i);
+  else if (mode === 'net' && net.conn) net.conn.sendJson({ t: 'goto', level: i });
+}
+
+// ---- result card, progress and records (both modes) ----
+function levelCleared(level, secs, deaths, world) {
+  let got = 0, total = 0;
+  for (const g of world.gems) { total++; if (g.taken) got++; }
+  const res = progress.record(level, secs, got, total);
+  fx.celebrate();
+  submitStars();
+  setTimeout(() => {
+    ui.openClear({ level, secs, gemsGot: got, gemsTotal: total, deaths, ...res }, {
+      onNext: () => gotoLevel(level >= TOTAL_LEVELS - 1 ? 0 : level + 1),
+      onRetry: () => gotoLevel(level),
+      onLevels: () => openLevelSelect(),
+    });
+    ui.showRecords(leaderboardAvailable(), loadBoard);
+  }, 900);
+}
+
+function leaderboardAvailable() {
+  const L = window.Usion && window.Usion.leaderboard;
+  return !!(me.embedded && L && typeof L.top === 'function');
+}
+let submitP = Promise.resolve();
+function submitStars() {
+  if (!leaderboardAvailable()) return;
+  const stars = progress.totalStars();
+  submitP = Promise.resolve()
+    .then(() => window.Usion.leaderboard.submit(stars, { levels: progress.highestUnlocked() + 1 }))
+    .catch((e) => console.warn('[DD] leaderboard submit failed', e));
+}
+async function loadBoard(tab) {
+  await submitP;                     // boards must include the score just earned
+  const L = window.Usion.leaderboard;
+  const rows = tab === 'friends' ? await L.friends({ limit: 20 }) : await L.top({ limit: 10 });
+  return Array.isArray(rows) ? rows : (rows && (rows.entries || rows.items)) || [];
+}
+
+// ================================================================ solo mode ==
+// No server: run the shared sim locally. One human drives BOTH heroes, switching
+// the controlled one with ⇄ (the idle hero holds still — it can still stand on a
+// plate). Promoted into a real 2-seat match by the host's Share button.
+const solo = { world: null, char: 'f', swapBound: false, clearedAt: 0 };
+
+function startSolo(level) {
+  if (mode === 'net') stopNet();
+  mode = 'solo';
+  solo.char = 'f';
+  solo.world = makeWorld(level);
+  solo.world.ended = false;
+  bindSwap();
+  const swap = $('btnSwap'); swap.hidden = false; swap.dataset.hero = 'f';
+  $('status').textContent = '';
+  shownLevel = -1;
+  window.__dd = { mode: 'solo', solo, renderer, gotoLevel };   // test/debug handle
+}
+
+function soloGoto(i) {
+  ui.hideAll();
+  loadLevel(solo.world, i);
+  solo.world.ended = false;
+  solo.world.deaths = 0;
+  solo.char = 'f'; $('btnSwap').dataset.hero = 'f';
+  shownLevel = -1;
+}
+
+function swapHero() {
+  if (mode !== 'solo' || ui.blocking()) return;
+  solo.char = solo.char === 'f' ? 'w' : 'f';
+  $('btnSwap').dataset.hero = solo.char;
+  play('click');
+}
+function bindSwap() {
+  if (solo.swapBound) return;
+  solo.swapBound = true;
+  $('btnSwap').addEventListener('pointerdown', (e) => { e.preventDefault(); swapHero(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Tab' || e.code === 'KeyS' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') { e.preventDefault(); swapHero(); }
+  });
+}
+
+function soloFrame(dt) {
+  const world = solo.world;
+  const paused = ui.blocking();
+  if (!paused && !world.ended) {
+    acc += dt; if (acc > DT * 6) acc = DT;
+    const drive = input.snapshot();
+    const inputs = solo.char === 'f' ? { f: drive, w: NO_INPUT } : { f: NO_INPUT, w: drive };
+    while (acc >= DT) {
+      acc -= DT;
+      const { completed } = stepServer(world, inputs, DT);
+      if (completed) {
+        world.ended = true;
+        levelCleared(world.level, Math.round(world.mapTime * 100) / 100, world.deaths, world);
+        break;
+      }
+    }
+  } else acc = 0;
+  fx.update(world, {});
+  drawWorld(world, dt, {
+    myKey: solo.char, remoteKey: solo.char === 'f' ? 'w' : 'f', myRenderPos: null,
+    deaths: world.deaths, mapTime: world.mapTime, partnerHere: true, solo: true,
+  });
+}
+
+// ========================================================= multiplayer mode ==
+const net = { conn: null, game: null, pingTimer: 0, hallDismissed: false };
 
 function startNet(resolveUrl) {
-  if (netStarted) return;
-  netStarted = true;
-  stopSoloPractice();
-
-  game = new Game(null);
-  net = new Net(resolveUrl, {
+  if (mode === 'net') return;
+  mode = 'net';
+  $('btnSwap').hidden = true;
+  ui.hideAll();
+  const game = net.game = new Game(null);
+  net.hallDismissed = false;
+  net.conn = new Net(resolveUrl, {
     name: me.userName || t('defaultName'),
+    hello: () => ({ avatar: me.avatar || '', next: progress.nextLevel() }),
     onSnapshot: (s) => game.onSnapshot(s),
     onEvent: (m) => game.onEvent(m),
     onStatus: (s) => {
       const st = $('status');
-      if (st) st.innerHTML = s === 'connected' ? '<span id="pingv"></span>' : `<span class="bad">${s}…</span>`;
-      const po = $('pauseOverlay');
-      if (po) po.hidden = (s === 'connected');
+      if (st) st.innerHTML = s === 'connected' ? '<span id="pingv"></span>' : `<span class="bad">${t('reconnecting')}</span>`;
+      $('pauseOverlay').hidden = (s === 'connected');
     },
   });
-  game.net = net;
-  window.__fw = { game, net, input, renderer };
-
-  let last = performance.now(), acc = 0;
-  function loop(now) {
-    requestAnimationFrame(loop);
-    let dt = (now - last) / 1000; last = now;
-    if (dt > 0.25) { dt = 0; acc = 0; }
-
-    acc += dt;
-    if (acc > DT * 6) acc = DT;
-    while (acc >= DT) { acc -= DT; if (net.connected) game.tick(input.snapshot()); }
-
-    game.frame();
-    handleEvents();
-    updateOverlays();
-
-    if (game.level !== prevLevel) { prevLevel = game.level; introT = 1.4; }
-    introT = Math.max(0, introT - dt);
-
-    renderer.draw(game.world, dt, {
-      myKey: game.myKey, remoteKey: game.remoteKey,
-      myRenderPos: game.myRenderPos(),
-      deaths: game.deaths, mapTime: game.mapTime,
-      best: bestTimes[game.level], partnerHere: game.names.size >= 2 || game.remotes.length > 0,
-      intro: introT,
-    });
-  }
-  requestAnimationFrame(loop);
-
-  setInterval(() => { const el = $('pingv'); if (el && net) el.textContent = `${net.rtt} ${t('ms')}`; }, 500);
+  game.net = net.conn;
+  window.__dd = { game, net: net.conn, input, renderer };
+  clearInterval(net.pingTimer);
+  net.pingTimer = setInterval(() => { const el = $('pingv'); if (el && net.conn) el.textContent = `${net.conn.rtt} ${t('ms')}`; }, 500);
 }
 
-function handleEvents() {
+function stopNet() {
+  if (net.conn) net.conn.close();
+  clearInterval(net.pingTimer);
+  net.conn = null; net.game = null;
+  $('pauseOverlay').hidden = true;
+  $('status').textContent = '';
+  if (mode === 'net') mode = null;
+}
+
+// leave the room and keep playing alone from the same level
+function goSolo() {
+  const lv = net.game ? net.game.level : progress.nextLevel();
+  ui.hideAll();
+  stopNet();
+  startSolo(lv);
+}
+
+function netFrame(dt) {
+  const game = net.game, conn = net.conn;
+  acc += dt; if (acc > DT * 6) acc = DT;
+  const inp = ui.blocking() && $('hallOverlay').hidden ? NO_INPUT : input.snapshot();
+  while (acc >= DT) { acc -= DT; if (conn.connected) game.tick(game.lobby ? NO_INPUT : inp); }
+  game.frame();
+  handleNetEvents();
+  const pos = {}; pos[game.myKey] = game.myRenderPos();
+  fx.update(game.world, pos);
+  const partnerHere = game.names.size >= 2;
+  drawWorld(game.world, dt, {
+    myKey: game.myKey, remoteKey: game.remoteKey, myRenderPos: game.myRenderPos(),
+    deaths: game.deaths, mapTime: game.mapTime, partnerHere, solo: false,
+  });
+}
+
+function refreshHall() {
+  const game = net.game;
+  if (!game || !game.ready) return;
+  if (!game.lobby) { if (!$('hallOverlay').hidden) ui.hide('hallOverlay'); return; }
+  ui.openHall(game.lobbyState || { players: [] }, game.myHero, {
+    onReady: (on) => net.conn && net.conn.sendJson({ t: 'ready', on }),
+    onInvite: () => { try { window.Usion.game.invite(); } catch { /* old SDK */ } },
+    onSolo: goSolo,
+  });
+}
+
+function handleNetEvents() {
+  const game = net.game;
   for (const e of game.drainEvents()) {
-    if (e.type === 'level') {
-      const finished = e.to - 1;
-      const prev = bestTimes[finished];
-      const isBest = prev == null || e.secs < prev;
-      if (isBest) { bestTimes[finished] = e.secs; saveBest(); }
-      toast(`Map ${finished + 1} cleared — ${fmt(e.secs)}${isBest ? '  ★ new best!' : ''}`);
-    } else if (e.type === 'victory') {
-      showVictory(e.total, e.per);
+    if (e.type === 'lobby') {
+      refreshHall();
+    } else if (e.type === 'goto') {
+      ui.hideAll();
+      shownLevel = -1;
+    } else if (e.type === 'cleared') {
+      levelCleared(e.level, e.secs, e.deaths, game.world);
     } else if (e.type === 'join') {
-      if (e.hero !== game.myHero) toast(`Partner joined! You are ${game.myKey === 'f' ? 'Fireboy 🔥' : 'Watergirl 💧'}`);
+      if (e.hero !== game.myHero) {
+        play('join');
+        ui.toast(t('partnerJoined', e.name || t('defaultName')));
+        ui.hide('leftOverlay');
+      } else {
+        ui.toast(t('youAre', game.myKey === 'f' ? t('heroF') : t('heroW')), 2200);
+      }
     } else if (e.type === 'leave') {
-      toast('Partner left — waiting for them to rejoin…');
-    } else if (e.type === 'restart') {
-      $('endOverlay').hidden = true;
+      if (!game.lobby && !game.ended) ui.openLeft({ onWait: () => {}, onSolo: goSolo });
     } else if (e.type === 'error') {
-      toast(e.reason || 'error');
+      ui.toast(e.reason || 'error');
     }
   }
-}
-
-function updateOverlays() {
-  const waiting = $('waitingOverlay');
-  if (!waiting) return;
-  const partnerHere = game.names.size >= 2 || game.remotes.length > 0;
-  const show = game.ready && !partnerHere && !game.ended && net.connected;
-  waiting.hidden = !show;
-}
-
-function showVictory(total, per) {
-  const per2 = (per && per.length) ? per : [];
-  const prevTotal = bestTimes.total;
-  const isBestTotal = prevTotal == null || total < prevTotal;
-  if (isBestTotal) { bestTimes.total = total; saveBest(); }
-  per2.forEach((secs, i) => { if (secs != null && (bestTimes[i] == null || secs < bestTimes[i])) bestTimes[i] = secs; });
-  saveBest();
-  $('endEmoji').textContent = '🏆';
-  $('endTitle').textContent = t('allMapsCleared', per2.length || 5);
-  const perMap = per2.map((s, i) => `${i + 1}: ${fmt(s || 0)}`).join('   ');
-  $('endStats').innerHTML =
-    `☠ ${game.deaths} ${t('fallsLabel')} · ⏱ <b>${fmt(total)}</b>` +
-    (isBestTotal ? ` <span style="color:#ffd76e">${t('newBest')}</span>` : (prevTotal != null ? ` <span style="opacity:.6">${t('bestWas', fmt(prevTotal))}</span>` : '')) +
-    `<br><span style="opacity:.72;font-size:13px">${perMap}</span>`;
-  $('endOverlay').hidden = false;
-}
-
-const fmt = (s) => { s = Math.floor(s || 0); return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60); };
-
-// ------------------------------------------------------------- solo practice --
-// No server: run the shared sim locally. One human drives BOTH heroes, switching
-// the controlled one with the ⇄ button (the idle hero holds still — it can still
-// stand on plates). This makes a solo/GameTok session actually completable.
-// Promoted into a real 2-seat match by the host's Share button.
-let soloActive = false, soloRAF = 0, soloChar = 'f', swapBound = false;
-let soloWorld = null, soloMapTimes = [];
-
-// Advance the local solo run when both heroes clear the exit doors. Mirrors the
-// server's completion handling (server.js) — there's no server in solo, so the
-// caller of stepServer must act on `completed` or the map never changes.
-function soloStep(inputs) {
-  const world = soloWorld;
-  const { completed } = stepServer(world, inputs, DT);
-  if (!completed || world.ended) return;
-  const finished = world.level;
-  const secs = Math.max(0, Math.round(world.mapTime));
-  soloMapTimes[finished] = secs;
-  const prev = bestTimes[finished];
-  const isBest = prev == null || secs < prev;
-  if (isBest) { bestTimes[finished] = secs; saveBest(); }
-  const to = finished + 1;
-  if (to >= TOTAL_LEVELS) {
-    world.ended = true;
-    const total = soloMapTimes.reduce((a, b) => a + (b || 0), 0);
-    showVictory(total, soloMapTimes.slice());
-  } else {
-    toast(`Map ${finished + 1} cleared — ${fmt(secs)}${isBest ? '  ★ new best!' : ''}`);
-    loadLevel(world, to);
-  }
-}
-
-// Restart the solo run from Map 1 (wired to the victory card's "Play again").
-function restartSolo() {
-  if (!soloActive) return;
-  soloMapTimes = [];
-  soloChar = 'f';
-  soloWorld = makeWorld(0);
-}
-
-function bindSwap() {
-  if (swapBound) return;
-  const el = $('btnSwap'); if (!el) return;
-  swapBound = true;
-  el.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    if (!soloActive) return;
-    soloChar = soloChar === 'f' ? 'w' : 'f';
-  });
-  window.addEventListener('keydown', (e) => {
-    if (!soloActive) return;
-    if (e.key === 'Tab' || e.key === 's') { e.preventDefault(); soloChar = soloChar === 'f' ? 'w' : 'f'; }
-  });
-}
-function startSoloPractice() {
-  if (soloActive || netStarted) return;
-  soloActive = true;
-  soloChar = 'f';
-  soloMapTimes = [];
-  $('start').style.display = 'none';
-  bindSwap();
-  const swap = $('btnSwap'); if (swap) swap.hidden = false;
-  soloWorld = makeWorld(0);
-  let last = performance.now(), acc = 0, intro = 1.4, pl = 0;
-  function frame(now) {
-    if (!soloActive) return;
-    soloRAF = requestAnimationFrame(frame);
-    let dt = (now - last) / 1000; last = now;
-    if (dt > 0.25) { dt = 0; acc = 0; }
-    acc += dt; if (acc > DT * 6) acc = DT;
-    const drive = input.snapshot();
-    const inputs = soloChar === 'f' ? { f: drive, w: {} } : { f: {}, w: drive };
-    while (acc >= DT) { acc -= DT; soloStep(inputs); }
-    const world = soloWorld;
-    if (world.level !== pl) { pl = world.level; intro = 1.4; }
-    intro = Math.max(0, intro - dt);
-    renderer.draw(world, dt, {
-      myKey: soloChar, remoteKey: soloChar === 'f' ? 'w' : 'f', myRenderPos: null,
-      deaths: world.deaths, mapTime: world.mapTime, best: bestTimes[world.level],
-      partnerHere: false, intro,
-    });
-  }
-  soloRAF = requestAnimationFrame(frame);
-}
-function stopSoloPractice() {
-  soloActive = false;
-  if (soloRAF) cancelAnimationFrame(soloRAF); soloRAF = 0;
-  const swap = $('btnSwap'); if (swap) swap.hidden = true;
+  // the welcome itself (no lobby message yet) also opens the hall
+  if (game.ready && game.lobby && $('hallOverlay').hidden && !ui.anyOpen()) refreshHall();
 }
 
 boot();

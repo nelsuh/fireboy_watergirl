@@ -8,8 +8,9 @@ import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import {
   MSG, DT, BTN_LEFT, BTN_RIGHT, BTN_JUMP, HF_DEAD,
-  encodeInput, decodeSnapshot,
+  PH_LOBBY, T, CHAR_H, encodeInput, decodeSnapshot,
 } from '../client/shared/protocol.js';
+import { makeWorld } from '../client/shared/sim.js';
 
 const PORT = 8124;
 const URL = `ws://127.0.0.1:${PORT}`;
@@ -38,7 +39,7 @@ class Bot {
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
       const to = setTimeout(() => reject(new Error('connect timeout')), 4000);
-      ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', name: this.name })));
+      ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', name: this.name, next: this.next || 0 })));
       ws.on('message', (data, isBinary) => {
         if (!isBinary) {
           const msg = JSON.parse(data.toString());
@@ -69,7 +70,7 @@ async function main() {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   await new Promise((resolve, reject) => {
-    srv.stdout.on('data', (d) => { if (String(d).includes('FIRE & WATER server')) resolve(); });
+    srv.stdout.on('data', (d) => { if (String(d).includes('server on')) resolve(); });
     srv.on('exit', () => reject(new Error('server died')));
     setTimeout(() => reject(new Error('server start timeout')), 5000);
   });
@@ -79,11 +80,26 @@ async function main() {
     const A = new Bot('alice');
     const B = new Bot('bob');
     await A.connect();
-    check(A.hero === 0, `A is Fireboy / hero 0 (got ${A.hero})`);
+    check(A.hero === 0, `A is Дөл / hero 0 (got ${A.hero})`);
     await B.connect();
-    check(B.hero === 1, `B is Watergirl / hero 1 (got ${B.hero})`);
+    check(B.hero === 1, `B is Дусал / hero 1 (got ${B.hero})`);
     await sleep(200);
     check(A.ev('join').some((e) => e.hero === 1), 'A received join event for B');
+
+    // ---- waiting hall: frozen until both are ready ----
+    check(!!(A.snap.phase & PH_LOBBY), 'room starts in the waiting hall');
+    const lx = A.me().x;
+    await A.drive(20, BTN_RIGHT);
+    await sleep(100);
+    check(Math.abs(A.me().x - lx) < 0.5, 'nobody moves in the waiting hall');
+    A.ws.send(JSON.stringify({ t: 'ready', on: true }));
+    await sleep(150);
+    check(!!(A.snap.phase & PH_LOBBY), 'one ready player does not start the match');
+    check(A.ev('lobby').some((e) => e.players.some((p) => p.hero === 0 && p.ready)), 'lobby broadcast shows A ready');
+    B.ws.send(JSON.stringify({ t: 'ready', on: true }));
+    await sleep(250);
+    check(!(A.snap.phase & PH_LOBBY), 'both ready → match starts');
+    check(A.ev('goto').some((e) => e.level === 0), 'start goes to the first unfinished level (0)');
 
     const a0 = A.me(), b0 = B.me();
     check(!!a0 && !!b0, `both heroes in snapshots (A@${Math.round(a0?.x)},${Math.round(a0?.y)} B@${Math.round(b0?.x)},${Math.round(b0?.y)})`);
@@ -100,12 +116,13 @@ async function main() {
     await sleep(300);
     check((A.snap?.tick ?? 0) > tickBefore, 'server still ticking after malformed frames');
 
-    // ---- movement + acks (short hop right, before the water pool at x≈224) ----
+    // ---- movement + acks (a short walk right) ----
     const ax0 = A.me().x;
-    await A.drive(Math.round(0.5 / DT), BTN_RIGHT);
+    await A.drive(Math.round(0.3 / DT), BTN_RIGHT);
+    await A.drive(3, 0);              // release, or the server keeps holding RIGHT
     await sleep(120);
     const ax1 = A.me().x;
-    check(ax1 - ax0 > 50, `Fireboy moved right ${Math.round(ax1 - ax0)}px (>50)`);
+    check(ax1 - ax0 > 30, `hero 0 moved right ${Math.round(ax1 - ax0)}px (>30)`);
     const ackGap = (A.seq - A.snap.lastAckSeq + 65536) % 65536;
     check(ackGap <= 3, `input ack tracks seq (gap ${ackGap})`);
 
@@ -114,13 +131,31 @@ async function main() {
     await A.drive(6, BTN_JUMP);
     let minY = A.me().y;
     for (let i = 0; i < 20; i++) { await A.drive(1, 0); minY = Math.min(minY, A.me().y); }
-    check(minY < ay0 - 30, `Fireboy jumped (rose ${Math.round(ay0 - minY)}px)`);
+    check(minY < ay0 - 30, `Дөл jumped (rose ${Math.round(ay0 - minY)}px)`);
 
-    // ---- hazard death is server-authoritative: run Fireboy into the water pool ----
-    const deaths0 = A.snap.deaths;
-    await A.drive(Math.round(2.2 / DT), BTN_RIGHT);
+    // ---- hazard death is server-authoritative: walk a hero right into the first
+    // pool on its floor that kills it (found from level 1's own layout) ----
+    const w0 = makeWorld(0);
+    const victim = ['f', 'w'].find((k) => {
+      const sp = w0.spawns[k];
+      const q = w0.liquids.filter((l) => l.y === sp.y && l.px > sp.x * T).sort((a, b) => a.px - b.px)[0];
+      return q && (q.kind === 'G' || (q.kind === 'W') === (k === 'f'));
+    });
+    if (victim) {
+      const bot = victim === 'f' ? A : B;
+      const deaths0 = bot.snap.deaths;
+      for (let i = 0; i < 40 && bot.snap.deaths === deaths0; i++) await bot.drive(6, BTN_RIGHT);
+      await sleep(150);
+      check(bot.snap.deaths > deaths0, `hero ${victim} died in the wrong pool → deaths ${bot.snap.deaths}`);
+    } else console.log('  --  level 1 has no walk-right hazard; death check skipped');
+
+    // ---- either player can pick a level; both follow ----
+    B.ws.send(JSON.stringify({ t: 'goto', level: 2 }));
+    await sleep(250);
+    check(A.snap.level === 2 && B.snap.level === 2, `goto from B moves both to level 3 (A=${A.snap.level})`);
+    B.ws.send(JSON.stringify({ t: 'goto', level: 999 }));
     await sleep(150);
-    check(A.snap.deaths > deaths0, `Fireboy drowned in water → deaths ${A.snap.deaths} (>${deaths0})`);
+    check(A.snap.level === 2, 'out-of-range goto is ignored');
 
     // ---- leave + seat reclaim on reconnect ----
     A.close();
@@ -128,7 +163,7 @@ async function main() {
     check(B.ev('leave').some((e) => e.hero === 0), 'B received leave event for hero 0');
     const A2 = new Bot('alice');            // same identity → reclaims seat 0
     await A2.connect();
-    check(A2.hero === 0, `reconnecting alice reclaimed Fireboy seat (got ${A2.hero})`);
+    check(A2.hero === 0, `reconnecting alice reclaimed Дөл seat (got ${A2.hero})`);
     A2.close();
     B.close();
   } finally {

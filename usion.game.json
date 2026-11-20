@@ -1,0 +1,8 @@
+{
+  "slug": "dul-dusal",
+  "kind": "server",
+  "port": 8080,
+  "health": "/health",
+  "memory_mb": 128,
+  "static_dir": null
+}

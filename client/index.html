@@ -1,60 +1,120 @@
 <!doctype html>
-<html lang="en">
+<html lang="mn">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>Fire &amp; Water</title>
-<link rel="stylesheet" href="style.css">
+<meta name="theme-color" content="#0c0a24">
+<title>Дөл ба Дусал</title>
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 
 <body>
 <div id="rot">
-  <canvas id="board"></canvas>
+  <canvas id="board" draggable="false"></canvas>
 
+  <button class="ctl ctl-menu" id="btnMenu" type="button" data-aria="ctlMenu" aria-label="menu">
+    <span class="bars"><i></i><i></i><i></i></span>
+  </button>
   <div id="status"></div>
 
   <!-- Touch controls (landscape): move on the left, jump/switch on the right.
        Inside #rot so they rotate with the game and stay a coherent gamepad. -->
   <div class="pad pad-left">
-    <button class="ctl" id="btnLeft"  aria-label="left">◀</button>
-    <button class="ctl" id="btnRight" aria-label="right">▶</button>
+    <button class="ctl" id="btnLeft" data-aria="ctlLeft" aria-label="left"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg></button>
+    <button class="ctl" id="btnRight" data-aria="ctlRight" aria-label="right"><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button>
   </div>
   <div class="pad pad-right">
-    <button class="ctl ctl-swap" id="btnSwap" aria-label="switch hero" hidden>⇄</button>
-    <button class="ctl ctl-jump" id="btnJump" aria-label="jump">▲</button>
+    <button class="ctl ctl-swap" id="btnSwap" data-aria="ctlSwap" aria-label="switch hero" hidden><span class="swap-dot f"></span><span class="swap-dot w"></span></button>
+    <button class="ctl ctl-jump" id="btnJump" data-aria="ctlJump" aria-label="jump"><svg viewBox="0 0 24 24"><path d="m5 15 7-7 7 7"/></svg></button>
   </div>
 
-  <!-- Start card removed — the game auto-starts on load. Kept hidden so the
-       (few) `$('start').style.display='none'` calls stay harmless no-ops. -->
-  <div id="start" class="overlay" hidden>
-    <div class="card">
-      <div id="whoami"></div>
+  <!-- Title splash: fades out over the first level, never blocks play -->
+  <div id="splash"><img src="assets/logo.webp" alt="" draggable="false"></div>
+
+  <!-- Pause menu -->
+  <div id="menuOverlay" class="overlay" hidden>
+    <div class="card card-menu">
+      <img class="menu-logo" src="assets/logo.webp" alt="" draggable="false">
+      <h2 data-t="paused">Paused</h2>
+      <div class="stack">
+        <button class="btn btn-primary" id="mResume" data-t="resume">Resume</button>
+        <button class="btn" id="mRestart" data-t="restart">Restart level</button>
+        <button class="btn" id="mLevels" data-t="levels">Levels</button>
+      </div>
     </div>
   </div>
 
-  <!-- Waiting for partner -->
-  <div id="waitingOverlay" class="overlay" hidden>
+  <!-- Level select -->
+  <div id="levelsOverlay" class="overlay" hidden>
+    <div class="card card-levels">
+      <div class="card-head">
+        <h2 data-t="chooseLevel">Choose a level</h2>
+        <div class="stars-total" id="starsTotal"></div>
+        <button class="icon-btn" id="levelsClose" data-aria="close" aria-label="close">✕</button>
+      </div>
+      <div class="level-grid" id="levelGrid"></div>
+    </div>
+  </div>
+
+  <!-- Level cleared -->
+  <div id="clearOverlay" class="overlay" hidden>
+    <div class="card card-clear">
+      <div class="clear-main">
+        <h2 id="clearTitle" data-t="cleared">Level cleared!</h2>
+        <div class="clear-name" id="clearName"></div>
+        <div class="big-stars" id="bigStars"><span class="bs"></span><span class="bs"></span><span class="bs"></span></div>
+        <ul class="star-reasons" id="starReasons"></ul>
+        <div class="clear-stats" id="clearStats"></div>
+        <div class="row">
+          <button class="btn" id="cRetry" data-t="retry">Retry</button>
+          <button class="btn" id="cLevels" data-t="toLevels">Levels</button>
+          <button class="btn btn-primary" id="cNext" data-t="next">Next level</button>
+        </div>
+      </div>
+      <div class="records" id="records">
+        <div class="tabs">
+          <button class="tab on" id="tabFriends" data-t="friends">Friends</button>
+          <button class="tab" id="tabGlobal" data-t="global">Global</button>
+        </div>
+        <div class="rec-list" id="recList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Waiting hall (multiplayer invite) -->
+  <div id="hallOverlay" class="overlay" hidden>
+    <div class="card card-hall">
+      <h2 data-t="hallTitle">Waiting hall</h2>
+      <p class="sub" data-t="hallSub">Both press Ready to start</p>
+      <div class="seats">
+        <div class="seat seat-f" id="seat0"></div>
+        <div class="seat seat-w" id="seat1"></div>
+      </div>
+      <div class="row">
+        <button class="btn" id="hInvite" data-t="invite">Invite a friend</button>
+        <button class="btn" id="hSolo" data-t="playSolo">Play solo</button>
+        <button class="btn btn-primary" id="hReady" data-t="imReady">I'm ready</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Partner left mid-game -->
+  <div id="leftOverlay" class="overlay" hidden>
     <div class="card">
-      <div class="spinner"></div>
-      <p id="waitingText">Waiting for your partner…</p>
+      <h2 data-t="partnerLeft">Your partner left</h2>
+      <p data-t="partnerLeftSub"></p>
+      <div class="row">
+        <button class="btn" id="lWait" data-t="keepWaiting">Wait</button>
+        <button class="btn btn-primary" id="lSolo" data-t="playSolo">Play solo</button>
+      </div>
     </div>
   </div>
 
   <!-- Reconnecting -->
-  <div id="pauseOverlay" class="overlay" hidden>
+  <div id="pauseOverlay" class="overlay overlay-soft" hidden>
     <div class="card">
       <div class="spinner"></div>
-      <p id="pauseText">Reconnecting…</p>
-    </div>
-  </div>
-
-  <!-- Victory -->
-  <div id="endOverlay" class="overlay" hidden>
-    <div class="card">
-      <div class="end-emoji" id="endEmoji">🏆</div>
-      <h2 id="endTitle">You did it!</h2>
-      <p id="endStats"></p>
-      <button class="btn btn-primary" id="againBtn">Play again</button>
+      <p id="pauseText" data-t="reconnecting">Reconnecting…</p>
     </div>
   </div>
 
@@ -62,6 +122,6 @@
 </div>
 
 <script src="https://usions.com/usion-sdk.js"></script>
-<script type="module" src="js/main.js"></script>
+<script type="module" src="js/main.js?v=2"></script>
 </body>
 </html>

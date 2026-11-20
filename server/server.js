@@ -1,5 +1,5 @@
-// FIRE & WATER — authoritative realtime server (direct mode).
-// Fixed 60 Hz co-op simulation: two seats, hero 0 = Fireboy, hero 1 = Watergirl.
+// Дөл ба Дусал — authoritative realtime server (direct mode).
+// Fixed 60 Hz co-op simulation: two seats, hero 0 = Дөл, hero 1 = Дусал.
 // Each client sends binary INPUT (seq + button bits) for ITS OWN hero; the server
 // steps BOTH heroes and the whole world (levers/plates/gates/lifts/gems/doors)
 // with the shared deterministic sim, acks the last processed seq per client in
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import {
   MSG, DT, TICK_RATE, TOTAL_LEVELS, MAX_PLAYERS_PER_ROOM,
-  BTN_LEFT, BTN_RIGHT, BTN_JUMP, PH_RUNNING, PH_RESET, PH_ENDED,
+  BTN_LEFT, BTN_RIGHT, BTN_JUMP, PH_RUNNING, PH_RESET, PH_ENDED, PH_LOBBY,
   HF_GROUND, HF_FACE_R, HF_DEAD, HF_DOOR,
   decodeInput, encodeSnapshot, encodePong,
 } from '../client/shared/protocol.js';
@@ -40,7 +40,23 @@ class Room {
     this.players = new Map();   // heroSeat(0|1) -> Player
     this.seats = new Map();     // userId -> heroSeat (stable across reconnects)
     this.world = makeWorld(0);
-    this.mapTimes = [];         // completion seconds per finished map
+    this.phase = 'lobby';       // 'lobby' (waiting hall) | 'play'
+    this.ready = new Map();     // seat -> bool (waiting hall READY toggles)
+  }
+  lobbyState() {
+    return {
+      t: 'lobby', phase: this.phase, level: this.world.level,
+      players: [...this.players.values()].map((p) => ({
+        hero: p.seat, name: p.name, avatar: p.avatar, ready: !!this.ready.get(p.seat),
+      })),
+    };
+  }
+  // Load a level fresh for both players (start, next, retry, level select).
+  goto(level) {
+    loadLevel(this.world, level);
+    this.world.ended = false;
+    this.world.deaths = 0;
+    this.broadcastJson({ t: 'goto', level: this.world.level });
   }
   freeSeat() {
     for (let i = 0; i < MAX_PLAYERS_PER_ROOM; i++) if (!this.players.has(i)) return i;
@@ -75,7 +91,16 @@ function stepRoom(room) {
   // 1. resolve each seat's input for THIS tick (exactly one per hero per world
   // tick — drain one queued input, else hold the last button state).
   const inputs = { f: { left: false, right: false, jump: false }, w: { left: false, right: false, jump: false } };
+  const lobby = room.phase !== 'play';
   for (const [seat, p] of room.players) {
+    if (lobby) {
+      // Waiting hall: ack and discard — buttons held here must not carry into
+      // the first frames of the level once the match starts.
+      if (p.inputQueue.length) p.lastAckSeq = p.inputQueue[p.inputQueue.length - 1].seq;
+      p.inputQueue.length = 0;
+      p.lastButtons = 0;
+      continue;
+    }
     if (p.inputQueue.length) {
       const inp = p.inputQueue.shift();
       p.lastAckSeq = inp.seq;
@@ -84,26 +109,21 @@ function stepRoom(room) {
     inputs[HERO_KEYS[seat]] = buttonsToInput(p.lastButtons);
   }
 
-  // 2. authoritative world step
-  const { completed } = stepServer(world, inputs, DT);
+  // 2. authoritative world step (frozen in the waiting hall)
+  const { completed } = lobby ? { completed: false } : stepServer(world, inputs, DT);
 
-  // 3. level completion → advance or victory
+  // 3. level completion → freeze and let the players choose what's next
   if (completed && !world.ended) {
-    const secs = Math.max(0, Math.round(world.mapTime));
-    room.mapTimes[world.level] = secs;
-    const to = world.level + 1;
-    if (to >= TOTAL_LEVELS) {
-      world.ended = true;
-      const total = room.mapTimes.reduce((a, b) => a + (b || 0), 0);
-      room.broadcastJson({ t: 'victory', total, per: room.mapTimes.slice() });
-    } else {
-      room.broadcastJson({ t: 'level', to, secs });
-      loadLevel(world, to);
-    }
+    world.ended = true;
+    room.broadcastJson({
+      t: 'cleared', level: world.level, secs: Math.round(world.mapTime * 100) / 100,
+      deaths: world.deaths, gems: gemsBitmask(world),
+    });
   }
 
   // 4. snapshot (binary, per-client ack + own-hero id)
   let phase = 0;
+  if (lobby) phase |= PH_LOBBY;
   if (!world.ended) phase |= PH_RUNNING;
   if (world.resetPending) phase |= PH_RESET;
   if (world.ended) phase |= PH_ENDED;
@@ -149,10 +169,11 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
 };
 
 const server = http.createServer(async (req, res) => {
-  if (req.url === '/healthz') { res.writeHead(200); res.end('ok'); return; }
+  if (req.url === '/healthz' || req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
   const path = normalize((req.url || '/').split('?')[0]).replace(/^(\.\.[/\\])+/, '');
   const file = join(CLIENT_DIR, path === '/' || path === '\\' ? 'index.html' : path);
   if (!file.startsWith(CLIENT_DIR)) { res.writeHead(403); res.end(); return; }
@@ -210,12 +231,14 @@ wss.on('connection', (ws, req) => {
 
     if (!isBinary) {
       let msg;
-      try { msg = JSON.parse(data.toString().slice(0, 512)); } catch { return; }
+      try { msg = JSON.parse(data.toString().slice(0, 1500)); } catch { return; }
       if (!msg || typeof msg !== 'object' || typeof msg.t !== 'string') return;
 
       if (msg.t === 'hello' && !player) {
         const roomId = auth.room_id;
         const name = String(msg.name || auth.name || 'player').replace(/[<>&"']/g, '').trim().slice(0, 16) || 'player';
+        const avatar = /^https:\/\/[^\s"'<>]{4,300}$/.test(String(msg.avatar || '')) ? String(msg.avatar) : '';
+        const next = Math.max(0, Math.min(TOTAL_LEVELS - 1, Number(msg.next) | 0));
         const r = getRoom(roomId);
         if (!r) { ws.send(JSON.stringify({ t: 'error', reason: 'server full' })); ws.close(1013); return; }
 
@@ -234,25 +257,43 @@ wss.on('connection', (ws, req) => {
 
         clearTimeout(helloTimer);
         room = r;
-        player = { seat, userId: auth.sub, name, ws, inputQueue: [], lastAckSeq: 0, lastButtons: 0 };
+        player = { seat, userId: auth.sub, name, avatar, next, ws, inputQueue: [], lastAckSeq: 0, lastButtons: 0 };
         room.players.set(seat, player);
 
-        // A fresh second player joining mid-map → restart the current map so both
-        // start together (mirrors the co-op "partner joined" reset).
-        if (room.players.size === 2 && !room.world.ended) resetLevel(room.world);
+        // A player coming back mid-level (reconnect) resumes the level: restart
+        // the map so both start together again.
+        if (room.phase === 'play' && room.players.size === 2 && !room.world.ended) resetLevel(room.world);
 
         ws.send(JSON.stringify({
           t: 'welcome', hero: seat, room: roomId, tick, tickRate: TICK_RATE, level: room.world.level,
-          players: [...room.players.values()].map((p) => ({ hero: p.seat, name: p.name })),
+          phase: room.phase, ended: room.world.ended,
+          players: [...room.players.values()].map((p) => ({ hero: p.seat, name: p.name, avatar: p.avatar })),
         }));
-        room.broadcastJson({ t: 'join', hero: seat, name });
+        room.broadcastJson({ t: 'join', hero: seat, name, avatar });
+        room.broadcastJson(room.lobbyState());
+        return;
+      }
+      if (!player || !room) return;
+
+      if (msg.t === 'ready' && room.phase === 'lobby') {
+        room.ready.set(player.seat, !!msg.on);
+        const both = room.players.size === MAX_PLAYERS_PER_ROOM
+          && [...room.players.keys()].every((s) => room.ready.get(s));
+        if (both) {
+          // Co-op: start at the first level neither player has finished yet.
+          const start = Math.min(...[...room.players.values()].map((p) => p.next));
+          room.phase = 'play';
+          room.goto(start);
+        }
+        room.broadcastJson(room.lobbyState());
         return;
       }
 
-      if (msg.t === 'restart' && player && room && room.world.ended) {
-        room.world = makeWorld(0);
-        room.mapTimes = [];
-        room.broadcastJson({ t: 'restart' });
+      // Next level, retry, or a pick from the level list — either player may
+      // choose, any time during play (co-op: nobody to cheat against).
+      if (msg.t === 'goto' && room.phase === 'play') {
+        const lv = Number(msg.level);
+        if (Number.isInteger(lv) && lv >= 0 && lv < TOTAL_LEVELS) room.goto(lv);
       }
       return;
     }
@@ -279,7 +320,9 @@ wss.on('connection', (ws, req) => {
       // have already taken over the seat under the same identity).
       if (room.players.get(player.seat) === player) {
         room.players.delete(player.seat);
+        room.ready.set(player.seat, false);
         room.broadcastJson({ t: 'leave', hero: player.seat });
+        room.broadcastJson(room.lobbyState());
       }
       if (room.players.size === 0) rooms.delete(room.id);
     }
@@ -293,5 +336,5 @@ wss.on('connection', (ws, req) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`FIRE & WATER server on :${PORT} — tick ${TICK_RATE} Hz, ${TOTAL_LEVELS} maps`);
+  console.log(`Дөл ба Дусал server on :${PORT} — tick ${TICK_RATE} Hz, ${TOTAL_LEVELS} maps`);
 });

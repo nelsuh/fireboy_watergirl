@@ -3,7 +3,7 @@
 // infrequent control messages (welcome/join/leave/level/death/victory) are JSON.
 //
 // This is a co-op platformer, so unlike the tank arena there are exactly TWO
-// fixed seats: hero 0 = Fireboy, hero 1 = Watergirl. Each client drives only its
+// fixed seats: hero 0 = Дөл, hero 1 = Дусал. Each client drives only its
 // own hero (left/right/jump); the server steps BOTH heroes plus the whole world
 // (levers/plates/gates/lifts/gems/doors) and is the single source of truth.
 
@@ -22,8 +22,9 @@ export const COYOTE = 0.1, JUMP_BUFFER = 0.15;
 export const JUMP_CUT_GRAV = 3;                  // gravity × while rising with jump released (short hops)
 export const CORNER_NUDGE = 7;                   // px a head/ledge corner clip is slid around
 
-export const TOTAL_LEVELS = 5;
-export const MAX_PLAYERS_PER_ROOM = 2;           // co-op: Fireboy + Watergirl
+import { MAPS } from './maps.js';
+export const TOTAL_LEVELS = MAPS.length;
+export const MAX_PLAYERS_PER_ROOM = 2;           // co-op: Дөл + Дусал
 export const INTERP_DELAY_MS = 100;              // remote hero rendered this far in the past (bigger buffer = smoother partner under real-network jitter)
 export const RESET_DELAY = 0.9;                  // seconds a death freeze lasts before respawn
 export const DOOR_HOLD = 0.45;                   // both-at-door dwell before advancing
@@ -31,7 +32,8 @@ export const DOOR_HOLD = 0.45;                   // both-at-door dwell before ad
 // phase bitfield (snapshot header)
 export const PH_RUNNING = 1;   // sim is live
 export const PH_RESET = 2;     // a death freeze is counting down
-export const PH_ENDED = 4;     // victory (all maps cleared)
+export const PH_ENDED = 4;     // level cleared — waiting for a player to pick what's next
+export const PH_LOBBY = 8;     // waiting hall: not both players present + ready yet
 
 // hero flags (per-hero snapshot byte)
 export const HF_GROUND = 1;

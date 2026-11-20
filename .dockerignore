@@ -1,0 +1,15 @@
+node_modules
+.git
+.claude
+.env
+.env.*
+art
+test
+tools
+scripts
+*.md
+index.html
+script.js
+maps.js
+style.css
+railway.json
