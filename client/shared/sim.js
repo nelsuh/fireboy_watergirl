@@ -243,8 +243,8 @@ export function stepHeroKinematics(world, h, input, dt) {
   h.jumpBuf = Math.max(0, h.jumpBuf - dt);
   h.coyote = Math.max(0, h.coyote - dt);
 
-  // jump released while still rising → fall back sooner (tap = short hop,
-  // hold = the full-height jump the levels are built around)
+  // every jump is the same height (JUMP_CUT_GRAV = 1); holding jump does not
+  // raise it — the levels are built around this one fixed height
   const g = h.vy < 0 && !input.jump ? GRAV * JUMP_CUT_GRAV : GRAV;
   h.vy = Math.min(h.vy + g * dt, MAX_FALL);
   moveX(world, h, h.vx * dt);

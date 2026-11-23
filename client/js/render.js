@@ -66,7 +66,10 @@ export class Renderer {
     // world and HUD fit inside the safe area. Insets are #rot's own edges, so
     // they are already mapped through the rotation (see --c-* in style.css).
     const s = this.safe = this._safeInsets();
-    const padH = Math.min(h * 0.2, 88);
+    // Only a thin strip is reserved under the board: the round controls sit in
+    // the side bands and may overlap the board's corner walls a little. A bigger
+    // reserve shrank the level to ~60% of a phone's height.
+    const padH = Math.min(h * 0.08, 32);
     const aw = w - s.left - s.right, ah = h - s.top - padH;
     this.scale = Math.min(aw / WW, ah / WH);
     this.ox = s.left + (aw - WW * this.scale) / 2;
@@ -125,7 +128,29 @@ export class Renderer {
 
     const { ctx, dpr, scale, ox, oy, cw, chh } = this;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#07061a'; ctx.fillRect(0, 0, cw, chh);
+    // letterbox bands: the cave painting continues edge to edge instead of flat
+    // black, with a soft shadow round the board. Built once per size, blitted.
+    const bandKey = cw + 'x' + chh + ':' + ox + ':' + oy + ':' + scale + ':' + dpr + ':' + !!IMG.bg;
+    if (this._bandKey !== bandKey) {
+      const b = this._bands || (this._bands = document.createElement('canvas'));
+      b.width = this.canvas.width; b.height = this.canvas.height;
+      const bc = b.getContext('2d');
+      bc.setTransform(dpr, 0, 0, dpr, 0, 0);
+      bc.fillStyle = '#07061a'; bc.fillRect(0, 0, cw, chh);
+      if (IMG.bg) {
+        const im = IMG.bg, s = Math.max(cw / im.width, chh / im.height);
+        // out of focus so its pagodas don't read as a second, mis-scaled copy
+        try { bc.filter = 'blur(10px) brightness(0.6) saturate(0.9)'; } catch { /* Safari */ }
+        bc.drawImage(im, (cw - im.width * s) / 2, (chh - im.height * s) / 2, im.width * s, im.height * s);
+        try { bc.filter = 'none'; } catch { /* ignore */ }
+      }
+      bc.shadowColor = 'rgba(0,0,0,0.6)'; bc.shadowBlur = 18;
+      bc.fillStyle = '#07061a'; bc.fillRect(ox, oy, WW * scale, WH * scale);
+      this._bandKey = bandKey;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this._bands, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // screen shake (world only, HUD stays put)
     let sx = 0, sy = 0;
@@ -165,7 +190,7 @@ export class Renderer {
     if (!this._vig) {
       const v = document.createElement('canvas'); v.width = 288; v.height = 160;
       const vc = v.getContext('2d'); const g = vc.createRadialGradient(144, 80, 50, 144, 80, 170);
-      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(3,2,14,0.55)');
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(3,2,14,0.28)');
       vc.fillStyle = g; vc.fillRect(0, 0, 288, 160); this._vig = v;
     }
     ctx.drawImage(this._vig, 0, 0, WW, WH);
@@ -212,10 +237,10 @@ export class Renderer {
     if (IMG.bg) {
       const im = IMG.bg, s = Math.max(WW / im.width, WH / im.height);
       // soften the painted backdrop so the playfield in front reads first
-      try { ctx.filter = 'blur(1.2px) saturate(0.85)'; } catch { /* Safari: no canvas filters */ }
+      try { ctx.filter = 'blur(0.8px) brightness(1.15) saturate(1.05)'; } catch { /* Safari: no canvas filters */ }
       ctx.drawImage(im, (WW - im.width * s) / 2, (WH - im.height * s) / 2, im.width * s, im.height * s);
       try { ctx.filter = 'none'; } catch { /* ignore */ }
-      ctx.fillStyle = 'rgba(10,8,30,0.42)'; ctx.fillRect(0, 0, WW, WH);
+      ctx.fillStyle = 'rgba(10,8,30,0.16)'; ctx.fillRect(0, 0, WW, WH);
       return;
     }
     const lv = world.level;
@@ -288,7 +313,7 @@ export class Renderer {
     const v = hash2(x, y);
     if (pat) {
       ctx.fillStyle = pat; ctx.fillRect(px, py, T, T);
-      ctx.fillStyle = inner ? 'rgba(8,6,28,0.45)' : 'rgba(8,6,28,0.12)'; ctx.fillRect(px, py, T, T);
+      ctx.fillStyle = inner ? 'rgba(8,6,28,0.3)' : 'rgba(8,6,28,0.04)'; ctx.fillRect(px, py, T, T);
     } else {
       const l = inner ? 0.78 : 1;
       const r = (52 + v * 10) * l, g = (47 + v * 9) * l, b = (96 + v * 16) * l;

@@ -33,7 +33,7 @@
 
 export const MAPS = [
   {
-    name: { mn: 'Анхны алхам', en: 'First Steps' }, par: 56,
+    name: { mn: 'Анхны алхам', en: 'First Steps' }, par: 58,
     grid: [
       "####################################",
       "#..................................#",
@@ -59,7 +59,7 @@ export const MAPS = [
     plates: [], levers: [], gates: [], lifts: [],
   },
   {
-    name: { mn: 'Чулуун хаалга', en: 'Stone Gates' }, par: 46,
+    name: { mn: 'Чулуун хаалга', en: 'Stone Gates' }, par: 47,
     grid: [
       "####################################",
       "#..................................#",
@@ -91,7 +91,7 @@ export const MAPS = [
     lifts: [],
   },
   {
-    name: { mn: 'Хөшүүргийн нууц', en: 'Secret of the Lever' }, par: 44,
+    name: { mn: 'Хөшүүргийн нууц', en: 'Secret of the Lever' }, par: 52,
     grid: [
       "####################################",
       "#..................................#",
@@ -210,7 +210,7 @@ export const MAPS = [
     lifts: [],
   },
   {
-    name: { mn: 'Ихэр гүүр', en: 'Twin Bridges' }, par: 35,
+    name: { mn: 'Ихэр гүүр', en: 'Twin Bridges' }, par: 36,
     grid: [
       "####################################",
       "#..................................#",
@@ -243,7 +243,7 @@ export const MAPS = [
     ],
   },
   {
-    name: { mn: 'Галт агуй', en: 'Fire Cavern' }, par: 61,
+    name: { mn: 'Галт агуй', en: 'Fire Cavern' }, par: 62,
     grid: [
       "####################################",
       "#..................................#",
@@ -272,7 +272,7 @@ export const MAPS = [
     lifts: [ { x: 4, y: 16, w: 3, dx: 22, dy: 0, ch: 1 }, { x: 29, y: 16, w: 2, dx: 0, dy: -8, ch: 2 }, { x: 34, y: 17, w: 1, dx: 0, dy: -9, ch: 3 } ],
   },
   {
-    name: { mn: 'Усан сүм', en: 'Water Shrine' }, par: 49,
+    name: { mn: 'Усан сүм', en: 'Water Shrine' }, par: 50,
     grid: [
       "####################################",
       "#..................................#",
@@ -301,7 +301,7 @@ export const MAPS = [
     lifts: [ { x: 1, y: 17, w: 2, dx: 0, dy: -11, ch: 2 } ],
   },
   {
-    name: { mn: 'Өгсөх зам', en: 'The Climb' }, par: 38,
+    name: { mn: 'Өгсөх зам', en: 'The Climb' }, par: 40,
     grid: [
       "####################################",
       "#..................................#",
@@ -367,7 +367,7 @@ export const MAPS = [
     lifts: [ { x: 7, y: 17, w: 2, dx: 0, dy: -8, ch: 3 }, { x: 32, y: 17, w: 2, dx: 0, dy: -8, ch: 4 } ],
   },
   {
-    name: { mn: 'Галт зуухны зүрх', en: 'Heart of the Furnace' }, par: 57,
+    name: { mn: 'Галт зуухны зүрх', en: 'Heart of the Furnace' }, par: 61,
     grid: [
       "####################################",
       "#....................#.............#",

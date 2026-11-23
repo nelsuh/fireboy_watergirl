@@ -19,7 +19,7 @@ export const JUMP_V = 575;                       // jump velocity
 export const GRAV = 1500, MAX_FALL = 920;
 export const LIFT_SPEED = 78;                    // platform glide u/s
 export const COYOTE = 0.1, JUMP_BUFFER = 0.15;
-export const JUMP_CUT_GRAV = 3;                  // gravity × while rising with jump released (short hops)
+export const JUMP_CUT_GRAV = 1;                  // no jump cut: tap and hold give the same jump
 export const CORNER_NUDGE = 7;                   // px a head/ledge corner clip is slid around
 
 import { MAPS } from './maps.js';
